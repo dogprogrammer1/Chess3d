@@ -3,8 +3,7 @@ import { evaluationMethods } from "./evaluate.js";
 import { searchMethods } from "./search.js";
 
 export const ENGINE_EVALUATORS = {
-    CLASSICAL: "classical",
-    NNUE: "NNUE_Evaluator"
+    CLASSICAL: "classical"
 };
 
 class Engine {
@@ -23,9 +22,7 @@ class Engine {
     }
 
     normalizeEvaluator(evaluator) {
-        return evaluator === ENGINE_EVALUATORS.NNUE
-            ? ENGINE_EVALUATORS.NNUE
-            : ENGINE_EVALUATORS.CLASSICAL;
+        return ENGINE_EVALUATORS.CLASSICAL;
     }
 }
 

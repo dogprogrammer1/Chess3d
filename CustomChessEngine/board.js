@@ -1,9 +1,4 @@
 import Engine from "./engine.js";
-import {
-    applyMoveToBoardNNUE,
-    invalidateBoardNNUE,
-    unmakeMoveToBoardNNUE
-} from "./nnue/nnue_evaluator.js";
 class Llong {
     constructor(x = 0n) {
         this.val = x;
@@ -65,7 +60,6 @@ export default class Board {
     }
 
     reset() {
-        this._nnueRuntime = null;
         this.board = [
             [
                 new Llong(0x00FF000000000000n),
@@ -152,27 +146,6 @@ export default class Board {
         this.squares[this.squareIndex(x, y)] = code;
     }
 
-    createNNUEUpdate() {
-        return {
-            deltas: [],
-            rebuildColors: [false, false]
-        };
-    }
-
-    addNNUEDelta(update, color, type, x, y, delta) {
-        if (type === KING) {
-            update.rebuildColors[color] = true;
-            return;
-        }
-
-        update.deltas.push({
-            color,
-            type,
-            square: this.squareIndex(x, y),
-            delta
-        });
-    }
-
     rebuildSquares() {
         this.squares = new Array(64).fill(EMPTY);
 
@@ -189,8 +162,6 @@ export default class Board {
                 }
             }
         }
-
-        invalidateBoardNNUE(this);
     }
 
     getPiece(x, y) {
@@ -444,18 +415,14 @@ export default class Board {
             rookMove: null,
             enPassantCapture: null,
             promotion: false,
-            promotionType: null,
-            nnue: this.createNNUEUpdate()
+            promotionType: null
         };
 
         if (targetCode !== EMPTY) {
             const targetColor = Math.floor(targetCode / 6);
             const targetType = targetCode % 6;
-            this.addNNUEDelta(undo.nnue, targetColor, targetType, x2, y2, -1);
             this.board[targetColor][targetType].clear(x2, y2);
         }
-
-        this.addNNUEDelta(undo.nnue, color, type, x1, y1, -1);
 
         if (
             type === PAWN &&
@@ -471,7 +438,6 @@ export default class Board {
                 y: capY,
                 code: enemy * 6 + PAWN
             };
-            this.addNNUEDelta(undo.nnue, enemy, PAWN, x2, capY, -1);
         }
 
         this.board[color][type].move(x1, y1, x2, y2);
@@ -484,15 +450,11 @@ export default class Board {
                 this.setPieceCode(7, y1, EMPTY);
                 this.setPieceCode(5, y1, color * 6 + ROOK);
                 undo.rookMove = { fromX: 7, toX: 5, y: y1 };
-                this.addNNUEDelta(undo.nnue, color, ROOK, 7, y1, -1);
-                this.addNNUEDelta(undo.nnue, color, ROOK, 5, y1, 1);
             } else {
                 this.board[color][ROOK].move(0, y1, 3, y1);
                 this.setPieceCode(0, y1, EMPTY);
                 this.setPieceCode(3, y1, color * 6 + ROOK);
                 undo.rookMove = { fromX: 0, toX: 3, y: y1 };
-                this.addNNUEDelta(undo.nnue, color, ROOK, 0, y1, -1);
-                this.addNNUEDelta(undo.nnue, color, ROOK, 3, y1, 1);
             }
         }
 
@@ -503,9 +465,6 @@ export default class Board {
             this.setPieceCode(x2, y2, color * 6 + promotedType);
             undo.promotion = true;
             undo.promotionType = promotedType;
-            this.addNNUEDelta(undo.nnue, color, promotedType, x2, y2, 1);
-        } else {
-            this.addNNUEDelta(undo.nnue, color, type, x2, y2, 1);
         }
 
         this.enPassant = [-1, -1];
@@ -540,7 +499,6 @@ export default class Board {
             this.halfmoveClock++;
         }
 
-        applyMoveToBoardNNUE(this, undo);
         return undo;
     }
 
@@ -582,7 +540,6 @@ export default class Board {
         this.halfmoveClock = undo.halfmoveClock;
         this.fullmoveNumber = undo.fullmoveNumber;
         this.gameResult = undo.gameResult;
-        unmakeMoveToBoardNNUE(this, undo);
     }
 
     rawMove(x1, y1, x2, y2, promotionType = QUEEN) {

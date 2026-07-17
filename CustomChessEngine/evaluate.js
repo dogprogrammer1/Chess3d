@@ -1,24 +1,13 @@
 import { pieceValues, pieceSquareTables } from "./tables.js";
-import { evaluateBoardWithNNUE, hasLoadedNNUEModel } from "./nnue/nnue_evaluator.js";
 
 export const evaluationMethods = {
     evaluateBoard() {
         const start = performance.now();
-        const score = this.evaluator === "NNUE_Evaluator"
-            ? this.evaluateBoardNNUE()
-            : this.evaluateBoardClassical();
+        const score = this.evaluateBoardClassical();
 
         this.evalCount++;
         this.evalTimeMs += performance.now() - start;
         return score;
-    },
-
-    evaluateBoardNNUE() {
-        if (hasLoadedNNUEModel()) {
-            return evaluateBoardWithNNUE(this.board);
-        }
-
-        return this.evaluateBoardClassical();
     },
 
     calculateGamePhase(totalMaterial) {

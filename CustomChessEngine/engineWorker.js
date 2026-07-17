@@ -1,41 +1,14 @@
-import Board from "../board.js";
+import Board from "./board.js";
 import Engine, { ENGINE_EVALUATORS } from "./engine.js";
-import { loadNNUEModel } from "./nnue/nnue_evaluator.js";
-
-async function resolveEvaluator(requestedEvaluator) {
-  if (requestedEvaluator !== ENGINE_EVALUATORS.NNUE) {
-    return {
-      evaluator: ENGINE_EVALUATORS.CLASSICAL,
-      warning: null
-    };
-  }
-
-  try {
-    await loadNNUEModel();
-    return {
-      evaluator: ENGINE_EVALUATORS.NNUE,
-      warning: null
-    };
-  } catch (error) {
-    return {
-      evaluator: ENGINE_EVALUATORS.CLASSICAL,
-      warning: `NNUE unavailable: ${error.message}`
-    };
-  }
-}
 
 async function handleFindBestMove(message) {
-  const { evaluator, warning } = await resolveEvaluator(
-    message.evaluator || ENGINE_EVALUATORS.CLASSICAL
-  );
-
   try {
     const board = new Board(0, { silent: true });
     board.restoreState(message.state);
     const workerEngine = new Engine(
       board,
       message.color,
-      evaluator
+      ENGINE_EVALUATORS.CLASSICAL
     );
 
     const start = performance.now();
@@ -46,8 +19,7 @@ async function handleFindBestMove(message) {
       bestMove,
       color: message.color,
       evaluator: workerEngine.evaluator,
-      requestedEvaluator: message.evaluator || ENGINE_EVALUATORS.CLASSICAL,
-      warning,
+      requestedEvaluator: ENGINE_EVALUATORS.CLASSICAL,
       elapsedMs,
       nodesEvaluated: workerEngine.nodesEvaluated,
       evalCount: workerEngine.evalCount,

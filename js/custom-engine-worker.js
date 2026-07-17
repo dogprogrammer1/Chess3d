@@ -1,8 +1,8 @@
 // Runs the user's original CustomChessEngine in a module worker. The adapter
 // converts Tournament Room's FEN into the bitboard state the original engine
 // expects, then converts its selected move straight back to UCI.
-import Board from '/CustomChessEngine/board.js';
-import Engine from '/CustomChessEngine/engine.js';
+import Board from '../CustomChessEngine/board.js';
+import Engine from '../CustomChessEngine/engine.js';
 
 const FILES = 'abcdefgh';
 const PIECE_TYPES = { p: 0, b: 1, n: 2, r: 3, q: 4, k: 5 };
@@ -49,8 +49,7 @@ self.addEventListener('message', event => {
     const board = new Board(0, { silent: true });
     board.restoreState(stateFromFen(request.fen));
     // Classical only: the user's hand-tuned material, piece-square, pawn
-    // structure, and king-safety evaluator. The NNUE evaluation path is
-    // deliberately never selected.
+    // structure, and king-safety evaluator are the sole evaluation path.
     const engine = new Engine(board, request.color, 'classical');
     const started = performance.now();
     const bestMove = engine.findBestMove(request.depth);

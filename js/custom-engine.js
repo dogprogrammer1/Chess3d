@@ -1,7 +1,7 @@
 /*
  * Direct client for the user's CustomChessEngine. The engine stays in a module
  * worker so its deeper classical alpha-beta search never blocks board input.
- * NNUE is intentionally never selected or asked to load a model here.
+ * This integration uses the bundled classical evaluator only.
  */
 (function () {
   'use strict';
@@ -40,6 +40,7 @@
       this.worker.addEventListener('error', event => {
         const details = [event.message, event.filename, event.lineno ? `line ${event.lineno}` : ''].filter(Boolean).join(' · ');
         const error = new Error(details || 'CustomChessEngine could not load. Restart the local server and try again.');
+        window.__customEngineWorkerError = { message: event.message, filename: event.filename, line: event.lineno, column: event.colno };
         this.rejectAll(error);
         this.worker?.terminate();
         this.worker = null;
