@@ -1,5 +1,5 @@
 param(
-  [string]$EnginePath = 'C:\Users\C.She29\Documents\stockfish\stockfish-windows-x86-64-avx2.exe',
+  [string]$EnginePath = (Join-Path (Split-Path -Parent $PSScriptRoot) 'lib\stockfish\stockfish-windows-x86-64-avx2.exe'),
   [int]$Port = 8765
 )
 
