@@ -40,14 +40,17 @@
             <select id="engine-select">
               <option value="stockfish" selected>Stockfish</option>
               <option value="custom">CustomChessEngine</option>
+              <option value="peer" hidden>Another device</option>
             </select>
             <div class="engine-profile" aria-live="polite">
               <span class="engine-profile-label">Selected engine</span>
               <strong id="selected-engine-name">Stockfish</strong>
               <p id="selected-engine-stats">Local UCI bridge &middot; tournament engine &middot; depth 14</p>
             </div>
-            <label class="select-label" for="engine-depth">Search depth <output id="depth-value">14</output></label>
-            <input id="engine-depth" type="range" min="2" max="20" value="14" />
+            <div id="engine-depth-control">
+              <label class="select-label" for="engine-depth">Search depth <output id="depth-value">14</output></label>
+              <input id="engine-depth" type="range" min="2" max="20" value="14" />
+            </div>
           </section>
           <section class="rail-section camera-section">
             <p class="eyebrow">Camera</p>
@@ -56,7 +59,7 @@
             <button class="rail-action compact" id="reset-camera"><span>&#9097;</span> Reset angle</button>
             <p class="camera-keys"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move &middot; <kbd>Space</kbd>/<kbd>Shift</kbd> zoom<br><kbd>I</kbd><kbd>J</kbd><kbd>K</kbd><kbd>L</kbd> look</p>
           </section>
-          <p class="rail-footnote">Tournament Room keeps play on your device. Account sync is planned; no email or game records leave this computer today.</p>
+          <p class="rail-footnote">Account sync is planned; no email or game records are sent to a cloud service. Network matches relay moves only between the two local devices.</p>
         </aside>
 
         <section class="board-panel" aria-label="3D chessboard">
@@ -94,7 +97,7 @@
             <div class="card-heading">
               <div>
                 <p class="eyebrow" id="engine-label">Stockfish</p>
-                <h2>Position analysis</h2>
+                <h2 id="analysis-card-title">Position analysis</h2>
               </div>
               <span class="engine-dot offline" id="engine-dot" title="Engine offline"></span>
             </div>
@@ -139,10 +142,10 @@
 
     <dialog id="tournament-rules" class="rules-dialog">
       <form method="dialog">
-        <p class="eyebrow">Tournament simulation</p>
-        <h2>Over-the-board rules</h2>
+        <p class="eyebrow" id="rules-eyebrow">Tournament simulation</p>
+        <h2 id="rules-title">Over-the-board rules</h2>
         <p>Touch-move is enforced: once you select one of your pieces, it must make a legal move. The piece will follow your cursor while you choose its destination.</p>
-        <p>Your clock keeps running after you move. Press your clock to complete the turn and start your opponent's clock. The engine presses its clock automatically after moving.</p>
+        <p id="rules-clock-copy">Your clock keeps running after you move. Press your clock to complete the turn and start your opponent's clock. The engine presses its clock automatically after moving.</p>
         <div class="dialog-actions">
           <button class="text-button" id="rules-cancel" type="button">Back</button>
           <button class="primary-action dialog-primary" id="rules-start" type="button">I understand &middot; Start game</button>
@@ -164,7 +167,7 @@
           <button class="mode-choice tournament-choice" id="launch-tournament-setup" type="button">
             <span class="mode-choice-kicker">Compete</span>
             <strong>Tournament simulation</strong>
-            <span>Touch-move, clocks, and an engine opponent at the table.</span>
+            <span>Touch-move and clocks against an engine or another device.</span>
           </button>
         </div>
         <div class="tournament-setup" id="tournament-setup" hidden>
@@ -177,9 +180,10 @@
               <select id="tournament-opponent">
                 <option value="stockfish">Stockfish</option>
                 <option value="custom">CustomChessEngine &middot; aggressive ~1900</option>
+                <option value="peer">Another device &middot; local room</option>
               </select>
             </label>
-            <label class="select-label" for="tournament-color">Your color
+            <label class="select-label" for="tournament-color"><span id="tournament-color-label">Your color</span>
               <select id="tournament-color">
                 <option value="w">White</option>
                 <option value="b">Black</option>
@@ -193,21 +197,77 @@
                 <option value="10|0">Rapid &middot; 10 + 0</option>
               </select>
             </label>
+            <label class="select-label peer-role-field" for="peer-role" id="peer-role-field" hidden>Pairing role
+              <select id="peer-role">
+                <option value="host">Create match</option>
+                <option value="guest">Join match</option>
+              </select>
+            </label>
           </div>
           <button class="primary-action start-tournament" id="open-tournament-rules" type="button">Review rules &middot; Start tournament</button>
         </div>
       </div>
     </section>
 
+    <dialog id="peer-dialog" class="pairing-dialog">
+      <form method="dialog">
+        <div class="pairing-heading">
+          <div>
+            <p class="eyebrow">Local network match</p>
+            <h2 id="peer-dialog-title">Pair another device</h2>
+          </div>
+          <span class="pairing-status" id="peer-status" data-state="idle">Not connected</span>
+        </div>
+        <p class="pairing-intro" id="peer-intro">Both devices connect through the small tournament relay running on the host computer. No game data leaves the local network.</p>
+
+        <section class="pairing-flow" id="peer-host-flow" hidden>
+          <div class="pairing-step">
+            <span>1</span>
+            <div>
+              <strong>Open Tournament Room on the other device</strong>
+              <p>Use the network address shown by the launcher, then choose Tournament simulation, Another device, and Join match.</p>
+            </div>
+          </div>
+          <div class="pairing-step">
+            <span>2</span>
+            <div>
+              <strong>Share this room code</strong>
+              <p>The tournament starts automatically when the other player joins.</p>
+            </div>
+          </div>
+          <output id="peer-room-output" class="room-code" aria-label="Room code">------</output>
+          <button class="text-button pairing-copy" id="copy-peer-room" type="button">Copy room code</button>
+        </section>
+
+        <section class="pairing-flow" id="peer-guest-flow" hidden>
+          <div class="pairing-step">
+            <span>1</span>
+            <div>
+              <strong>Enter the host's room code</strong>
+              <p>The host chooses the colors and time control for this match.</p>
+            </div>
+          </div>
+          <input id="peer-room-input" class="room-code-input" aria-label="Room code" autocomplete="off" maxlength="6" placeholder="ABC234" />
+          <button class="primary-action pairing-primary" id="join-peer-room" type="button">Join room</button>
+        </section>
+
+        <p class="pairing-error" id="peer-error" role="alert" hidden></p>
+        <div class="dialog-actions">
+          <button class="text-button" id="cancel-peer-pairing" type="button">Cancel pairing</button>
+        </div>
+      </form>
+    </dialog>
+
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-    <script src="js/chess.js"></script>
-    <script src="js/storage.js"></script>
-    <script src="js/stockfish.js"></script>
-    <script src="js/custom-engine.js"></script>
-    <script src="js/tournament-clock.js"></script>
-    <script src="js/solid-board.js"></script>
-    <script src="js/renderer.js"></script>
+    <script src="js/domain/chess.js"></script>
+    <script src="js/services/game-storage.js"></script>
+    <script src="js/engines/stockfish-client.js"></script>
+    <script src="js/engines/custom-engine-client.js"></script>
+    <script src="js/tournament/tournament-clock.js"></script>
+    <script src="js/multiplayer/room-client.js"></script>
+    <script src="js/rendering/solid-board.js"></script>
+    <script src="js/rendering/renderer.js"></script>
     <script src="js/app.js"></script>
   </body>
 </html>

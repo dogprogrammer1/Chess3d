@@ -3,6 +3,7 @@
  * It is intentionally UI-agnostic so it can later be shared by desktop,
  * account-sync, and saved-game adapters.
  */
+/* Chess rules and notation domain. */
 (function () {
   'use strict';
 

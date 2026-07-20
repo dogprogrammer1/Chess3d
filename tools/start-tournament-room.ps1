@@ -10,7 +10,9 @@ $ErrorActionPreference = 'Stop'
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $bridgeScript = Join-Path $PSScriptRoot 'start-stockfish-bridge.ps1'
+$roomScript = Join-Path $PSScriptRoot 'start-room-relay.ps1'
 $serverScript = Join-Path $PSScriptRoot 'start-local-server.ps1'
+$roomPort = 8766
 
 function Test-PortIsListening([int]$Port) {
   return [bool]([Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners() |
@@ -41,6 +43,21 @@ if (Test-PortIsListening $BridgePort) {
   }
 }
 
-$serverArguments = @{ Port = $WebPort; Root = $projectRoot }
+if (Test-PortIsListening $RoomPort) {
+  Write-Host "Using the tournament room relay already running on port $RoomPort."
+} else {
+  $powerShell = Join-Path $PSHOME 'powershell.exe'
+  $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"{0}"' -f $roomScript), '-Port', $RoomPort, '-WebPort', $WebPort, '-ParentProcessId', $PID)
+  $roomRelay = Start-Process -FilePath $powerShell -ArgumentList $arguments -WorkingDirectory $projectRoot -WindowStyle Hidden -PassThru
+  try {
+    Wait-ForPort $RoomPort 'The tournament room relay'
+    Write-Host "Tournament room relay started on the local network."
+  } catch {
+    if (!$roomRelay.HasExited) { Stop-Process -Id $roomRelay.Id -Force }
+    throw
+  }
+}
+
+$serverArguments = @{ Port = $WebPort; Root = $projectRoot; Network = $true }
 if (!$NoBrowser) { $serverArguments.OpenBrowser = $true }
 & $serverScript @serverArguments

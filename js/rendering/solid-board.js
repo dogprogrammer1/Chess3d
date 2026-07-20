@@ -1,5 +1,6 @@
 /* Single-canvas WebGL scene for the board, coordinates, move markers,
  * and shared low-poly chess meshes. The same scene also owns ray picking. */
+/* WebGL board scene and piece meshes. */
 (function () {
   'use strict';
 

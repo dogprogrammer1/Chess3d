@@ -9,7 +9,7 @@
   const MAX_DEPTH = 10;
   // The local server exposes the application at its root. An absolute route
   // prevents a nested page from resolving this as e.g. tools/js/worker.js.
-  const WORKER_URL = '/js/custom-engine-worker.js';
+  const WORKER_URL = '/js/engines/custom-engine-worker.js';
 
   class CustomChessEngine {
     constructor() {

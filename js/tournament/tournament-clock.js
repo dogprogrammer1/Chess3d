@@ -33,6 +33,22 @@
       this.onTick(this.snapshot());
     }
 
+    sync({ white, black, activeColor = null, flagged = false }) {
+      this.cancelFrame();
+      this.activeColor = null;
+      this.remaining = {
+        w: Math.max(0, Number(white)),
+        b: Math.max(0, Number(black))
+      };
+      this.flagged = Boolean(flagged);
+      if (!this.flagged && ['w', 'b'].includes(activeColor) && this.remaining[activeColor] > 0) {
+        this.activeColor = activeColor;
+        this.lastTimestamp = performance.now();
+      }
+      this.onTick(this.snapshot());
+      this.schedule();
+    }
+
     start(color) {
       if (this.flagged || !['w', 'b'].includes(color)) return false;
       if (this.activeColor && this.activeColor !== color) this.stop(false);

@@ -7,15 +7,17 @@
   const { StockfishClient } = window.TournamentEngine;
   const { CustomChessEngine } = window.TournamentCustomEngine;
   const { TournamentClock } = window.TournamentTiming;
+  const { RoomClient, createRoomCode, normalizeRoom } = window.TournamentMultiplayer;
   const $ = id => document.getElementById(id);
 
   const ui = {
     board: $('chessboard'), title: $('game-title'), turn: $('turn-indicator'), hint: $('board-hint'), sessionStatus: $('session-status'),
     newGame: $('new-game'), undo: $('undo-move'), flip: $('flip-board'), engineSelect: $('engine-select'), engineSectionTitle: $('engine-section-title'), engineSelectLabel: $('engine-select-label'), depth: $('engine-depth'), depthValue: $('depth-value'), opponentDescription: $('opponent-description'), selectedEngineName: $('selected-engine-name'), selectedEngineStats: $('selected-engine-stats'),
     camera: $('camera-tilt'), resetCamera: $('reset-camera'), save: $('save-game'), moveList: $('move-list'), copyPgn: $('copy-pgn'), copyFen: $('copy-fen'), fen: $('fen-value'),
-    connect: $('connect-engine'), engineDot: $('engine-dot'), engineLabel: $('engine-label'), engineMessage: $('engine-message'), evalScore: $('eval-score'), evalMeter: $('eval-meter-fill'), pv: $('pv-line'),
+    connect: $('connect-engine'), engineDot: $('engine-dot'), engineLabel: $('engine-label'), engineMessage: $('engine-message'), evalScore: $('eval-score'), evalMeter: $('eval-meter-fill'), pv: $('pv-line'), analysisCardTitle: $('analysis-card-title'), depthControl: $('engine-depth-control'),
     promotion: $('promotion-dialog'), promotionOptions: $('promotion-options'), toast: $('toast'),
-    menu: $('mode-menu'), openMenu: $('open-mode-menu'), launchAnalysis: $('launch-analysis'), launchTournamentSetup: $('launch-tournament-setup'), modeChoiceGrid: $('mode-choice-grid'), tournamentSetup: $('tournament-setup'), backToModeChoice: $('back-to-mode-choice'), tournamentOpponent: $('tournament-opponent'), tournamentColor: $('tournament-color'), tournamentTimeControl: $('tournament-time-control'), openTournamentRules: $('open-tournament-rules'), rules: $('tournament-rules'), rulesStart: $('rules-start'), rulesCancel: $('rules-cancel'),
+    menu: $('mode-menu'), openMenu: $('open-mode-menu'), launchAnalysis: $('launch-analysis'), launchTournamentSetup: $('launch-tournament-setup'), modeChoiceGrid: $('mode-choice-grid'), tournamentSetup: $('tournament-setup'), backToModeChoice: $('back-to-mode-choice'), tournamentOpponent: $('tournament-opponent'), tournamentColor: $('tournament-color'), tournamentColorLabel: $('tournament-color-label'), tournamentTimeControl: $('tournament-time-control'), peerRoleField: $('peer-role-field'), peerRole: $('peer-role'), openTournamentRules: $('open-tournament-rules'), rules: $('tournament-rules'), rulesEyebrow: $('rules-eyebrow'), rulesTitle: $('rules-title'), rulesClockCopy: $('rules-clock-copy'), rulesStart: $('rules-start'), rulesCancel: $('rules-cancel'),
+    peerDialog: $('peer-dialog'), peerDialogTitle: $('peer-dialog-title'), peerStatus: $('peer-status'), peerHostFlow: $('peer-host-flow'), peerGuestFlow: $('peer-guest-flow'), peerRoomOutput: $('peer-room-output'), copyPeerRoom: $('copy-peer-room'), peerRoomInput: $('peer-room-input'), joinPeerRoom: $('join-peer-room'), peerError: $('peer-error'), cancelPeerPairing: $('cancel-peer-pairing'),
     tournamentClocks: $('tournament-clocks'), whiteClock: $('white-clock'), blackClock: $('black-clock'), whiteClockTime: $('white-clock-time'), blackClockTime: $('black-clock-time'), timeControlLabel: $('time-control-label')
   };
 
@@ -25,11 +27,16 @@
       this.storage = new GameStorage();
       this.engine = new StockfishClient();
       this.customEngine = new CustomChessEngine();
+      this.roomClient = new RoomClient({
+        onStatus: (status, detail) => this.handleRoomStatus(status, detail),
+        onMessage: (type, payload) => this.handleRoomMessage(type, payload)
+      });
       this.appMode = 'analysis';
       this.tournament = null;
       this.clock = null;
       this.timeoutResult = null;
       this.pendingTournamentConfig = null;
+      this.peerMatchStarted = false;
       this.touchMove = null;
       this.selected = null;
       this.selectionMoves = [];
@@ -77,9 +84,18 @@
       ui.launchAnalysis.addEventListener('click', () => this.startAnalysis());
       ui.launchTournamentSetup.addEventListener('click', () => this.showTournamentSetup());
       ui.backToModeChoice.addEventListener('click', () => this.hideTournamentSetup());
+      ui.tournamentOpponent.addEventListener('change', () => this.updateTournamentSetup());
+      ui.peerRole.addEventListener('change', () => this.updateTournamentSetup());
       ui.openTournamentRules.addEventListener('click', () => this.openTournamentRules());
-      ui.rulesStart.addEventListener('click', () => this.startTournament(this.pendingTournamentConfig));
+      ui.rulesStart.addEventListener('click', () => {
+        if (this.pendingTournamentConfig?.opponent === 'peer') this.startRoomPairing(this.pendingTournamentConfig);
+        else this.startTournament(this.pendingTournamentConfig);
+      });
       ui.rulesCancel.addEventListener('click', () => { ui.rules.close(); this.pendingTournamentConfig = null; });
+      ui.copyPeerRoom.addEventListener('click', () => this.copy(ui.peerRoomOutput.value, 'Room code copied.'));
+      ui.peerRoomInput.addEventListener('input', () => { ui.peerRoomInput.value = normalizeRoom(ui.peerRoomInput.value); });
+      ui.joinPeerRoom.addEventListener('click', () => this.joinRoom());
+      ui.cancelPeerPairing.addEventListener('click', () => this.cancelRoomPairing());
       ui.whiteClock.addEventListener('click', () => this.pressPlayerClock('w'));
       ui.blackClock.addEventListener('click', () => this.pressPlayerClock('b'));
       window.addEventListener('keydown', event => this.handleCameraKey(event, true));
@@ -111,7 +127,7 @@
         this.engineThinking = false;
         const move = this.game.moveFromUci(message.move);
         if (!move) { this.showToast('Stockfish returned an invalid move for this position.'); return; }
-        this.commitMove(move, true);
+        this.commitMove(move, 'engine');
       };
     }
 
@@ -132,9 +148,11 @@
     isGameOver() { return Boolean(this.game.result || this.timeoutResult); }
     resultText() { return this.timeoutResult || this.game.result; }
     engineKind() { return this.isTournament() ? this.tournament.opponent : ui.engineSelect.value; }
-    engineColor() { return this.isTournament() ? this.tournament.engineColor : null; }
+    opponentColor() { return this.isTournament() ? this.tournament.opponentColor : null; }
+    engineColor() { return this.engineKind() === 'peer' ? null : this.opponentColor(); }
     playerColor() { return this.isTournament() ? this.tournament.playerColor : null; }
-    engineName() { return this.engineKind() === 'custom' ? 'CustomChessEngine' : 'Stockfish'; }
+    isPeerTournament() { return this.isTournament() && this.engineKind() === 'peer'; }
+    engineName() { return this.engineKind() === 'peer' ? 'Another device' : this.engineKind() === 'custom' ? 'CustomChessEngine' : 'Stockfish'; }
     opponentName() { return this.engineName(); }
 
     getTimeControl(value = ui.tournamentTimeControl.value) {
@@ -145,6 +163,7 @@
     showTournamentSetup() {
       ui.modeChoiceGrid.hidden = true;
       ui.tournamentSetup.hidden = false;
+      this.updateTournamentSetup();
     }
     hideTournamentSetup() {
       ui.tournamentSetup.hidden = true;
@@ -152,9 +171,14 @@
     }
     openModeMenu() {
       if (this.isTournament()) {
-        this.clock?.stop();
-        this.cancelEngineSearch();
-        ui.hint.textContent = 'Tournament paused. Choose a new session to begin again.';
+        if (this.isPeerTournament()) {
+          this.leaveTournament();
+          ui.hint.textContent = 'Network match ended. Choose a new session to begin again.';
+        } else {
+          this.clock?.stop();
+          this.cancelEngineSearch();
+          ui.hint.textContent = 'Tournament paused. Choose a new session to begin again.';
+        }
       }
       this.hideTournamentSetup();
       ui.menu.hidden = false;
@@ -163,6 +187,7 @@
       this.leaveTournament();
       this.appMode = 'analysis';
       ui.menu.hidden = true;
+      if (ui.engineSelect.value === 'peer') ui.engineSelect.value = 'stockfish';
       ui.engineSelect.disabled = false;
       this.timeoutResult = null;
       this.touchMove = null;
@@ -176,21 +201,40 @@
       this.pendingTournamentConfig = {
         opponent: ui.tournamentOpponent.value,
         playerColor: ui.tournamentColor.value,
+        role: ui.peerRole.value,
         ...this.getTimeControl()
       };
+      const peer = this.pendingTournamentConfig.opponent === 'peer';
+      ui.rulesEyebrow.textContent = peer ? 'Local network tournament' : 'Tournament simulation';
+      ui.rulesTitle.textContent = peer ? 'Two-device tournament rules' : 'Over-the-board rules';
+      ui.rulesClockCopy.textContent = peer
+        ? 'Your clock keeps running after you move. Press it to complete the turn; the move and synchronized clock are relayed to the other device.'
+        : 'Your clock keeps running after you move. Press your clock to complete the turn and start your opponent’s clock. The engine presses its clock automatically after moving.';
+      ui.rulesStart.textContent = peer ? 'I understand · Pair devices' : 'I understand · Start game';
       ui.rules.showModal();
     }
-    startTournament(config) {
+    updateTournamentSetup() {
+      const peer = ui.tournamentOpponent.value === 'peer';
+      const joining = peer && ui.peerRole.value === 'guest';
+      ui.peerRoleField.hidden = !peer;
+      ui.tournamentColorLabel.textContent = peer ? (joining ? 'Chosen by host' : 'Host color') : 'Your color';
+      ui.tournamentColor.disabled = joining;
+      ui.tournamentTimeControl.disabled = joining;
+      ui.openTournamentRules.textContent = peer ? 'Review rules · Pair devices' : 'Review rules · Start tournament';
+    }
+    startTournament(config, { keepRoom = false } = {}) {
       if (!config) return;
-      ui.rules.close();
-      this.leaveTournament();
+      if (ui.rules.open) ui.rules.close();
+      if (ui.peerDialog.open) ui.peerDialog.close();
+      this.leaveTournament({ keepRoom });
       this.appMode = 'tournament';
       this.timeoutResult = null;
       this.tournament = {
         ...config,
-        engineColor: config.playerColor === 'w' ? 'b' : 'w',
+        opponentColor: config.playerColor === 'w' ? 'b' : 'w',
         awaitingClockPress: false,
-        waitingForEngine: false
+        waitingForEngine: false,
+        waitingForRemoteClock: false
       };
       ui.engineSelect.value = config.opponent;
       ui.engineSelect.disabled = true;
@@ -223,7 +267,7 @@
         this.beginTournamentClock();
       }
     }
-    leaveTournament() {
+    leaveTournament({ keepRoom = false } = {}) {
       this.clock?.dispose();
       this.clock = null;
       this.tournament = null;
@@ -231,6 +275,10 @@
       this.timeoutResult = null;
       this.cancelEngineSearch();
       this.renderer.cancelTournamentDrag();
+      if (!keepRoom) {
+        this.roomClient.close(false);
+        this.peerMatchStarted = false;
+      }
     }
     beginTournamentClock() {
       if (!this.isTournament() || this.isGameOver()) return;
@@ -238,10 +286,156 @@
       this.clock.start(this.game.turn);
       this.renderClocks();
       if (this.game.turn === this.playerColor()) ui.hint.textContent = 'Your clock is running. Touch a piece to begin your move.';
-      this.maybeEngineTurn();
+      else if (this.isPeerTournament()) ui.hint.textContent = 'Waiting for the other player’s move…';
+      else this.maybeEngineTurn();
+    }
+
+    startRoomPairing(config) {
+      if (ui.rules.open) ui.rules.close();
+      this.leaveTournament();
+      this.pendingTournamentConfig = { ...config, opponent: 'peer' };
+      this.peerMatchStarted = false;
+      ui.peerError.hidden = true;
+      ui.peerError.textContent = '';
+      ui.peerHostFlow.hidden = config.role !== 'host';
+      ui.peerGuestFlow.hidden = config.role !== 'guest';
+      ui.peerDialogTitle.textContent = config.role === 'host' ? 'Create a tournament room' : 'Join a tournament room';
+      ui.peerStatus.dataset.state = 'connecting';
+      ui.peerStatus.textContent = config.role === 'host' ? 'Creating room' : 'Enter room code';
+      ui.peerRoomInput.value = '';
+      ui.peerDialog.showModal();
+
+      if (config.role === 'host') {
+        const room = createRoomCode();
+        ui.peerRoomOutput.value = room;
+        this.roomClient.connect(room, 'host').catch(error => this.showRoomError(error.message));
+      }
+    }
+
+    joinRoom() {
+      const room = normalizeRoom(ui.peerRoomInput.value);
+      ui.peerRoomInput.value = room;
+      ui.joinPeerRoom.disabled = true;
+      ui.peerError.hidden = true;
+      this.roomClient.connect(room, 'guest')
+        .catch(error => this.showRoomError(error.message))
+        .finally(() => { ui.joinPeerRoom.disabled = false; });
+    }
+
+    cancelRoomPairing() {
+      this.roomClient.close(false);
+      this.peerMatchStarted = false;
+      this.pendingTournamentConfig = null;
+      if (ui.peerDialog.open) ui.peerDialog.close();
+    }
+
+    showRoomError(message) {
+      ui.peerError.textContent = message;
+      ui.peerError.hidden = false;
+      ui.peerStatus.dataset.state = 'failed';
+      ui.peerStatus.textContent = 'Connection failed';
+    }
+
+    handleRoomStatus(status, detail) {
+      const labels = {
+        connecting: 'Connecting',
+        waiting: 'Waiting for player',
+        connected: 'Connected',
+        disconnected: 'Disconnected',
+        failed: 'Connection failed',
+        closed: 'Closed'
+      };
+      ui.peerStatus.dataset.state = status;
+      ui.peerStatus.textContent = labels[status] || 'Not connected';
+      if (status === 'failed') this.showRoomError(detail);
+      if (this.isPeerTournament()) {
+        ui.engineDot.className = `engine-dot ${status === 'connected' ? 'online' : status === 'connecting' || status === 'waiting' ? 'connecting' : 'offline'}`;
+        ui.engineMessage.textContent = detail || labels[status] || 'Local tournament room';
+      }
+    }
+
+    handleRoomMessage(type, payload) {
+      if (type === 'room-ready') {
+        if (this.roomClient.role !== 'host' || this.peerMatchStarted) return;
+        const config = { ...this.pendingTournamentConfig, role: 'host', opponent: 'peer' };
+        this.peerMatchStarted = true;
+        this.startTournament(config, { keepRoom: true });
+        this.roomClient.send('game-start', {
+          hostColor: config.playerColor,
+          timeControl: config.value
+        });
+        return;
+      }
+      if (type === 'game-start') {
+        if (this.roomClient.role !== 'guest' || this.peerMatchStarted) return;
+        const allowedControls = new Set(['1|0', '3|2', '5|0', '10|0']);
+        const hostColor = payload.hostColor === 'b' ? 'b' : 'w';
+        const timeControl = allowedControls.has(payload.timeControl) ? payload.timeControl : '5|0';
+        this.peerMatchStarted = true;
+        this.startTournament({
+          opponent: 'peer',
+          role: 'guest',
+          playerColor: hostColor === 'w' ? 'b' : 'w',
+          ...this.getTimeControl(timeControl)
+        }, { keepRoom: true });
+        return;
+      }
+      if (type === 'move') this.receiveRoomMove(payload);
+      if (type === 'clock') this.receiveRoomClock(payload);
+      if (type === 'timeout') this.handleTimeout(payload.color, true);
+      if (type === 'restart' && this.isPeerTournament()) this.resetTournamentBoard(false);
+      if (type === 'sync-error' && this.isPeerTournament()) {
+        this.clock?.stop();
+        this.tournament.connectionLost = true;
+        this.clearSelection(false);
+        this.render();
+        ui.hint.textContent = 'The two boards lost synchronization. Start a new network match.';
+        this.showToast('Network match synchronization stopped.');
+      }
+      if (type === 'peer-left' && this.isPeerTournament()) {
+        this.clock?.stop();
+        this.tournament.connectionLost = true;
+        this.clearSelection(false);
+        this.render();
+        ui.hint.textContent = 'The other player left the tournament room.';
+        this.showToast('Network match disconnected.');
+      }
+    }
+
+    receiveRoomMove(payload) {
+      if (!this.isPeerTournament() || this.isGameOver() || payload.beforeFen !== this.game.fen() || this.game.turn !== this.opponentColor()) {
+        this.roomClient.send('sync-error', { fen: this.game.fen() });
+        return;
+      }
+      const move = this.game.moveFromUci(payload.uci);
+      if (!move) {
+        this.roomClient.send('sync-error', { fen: this.game.fen() });
+        return;
+      }
+      this.commitMove(move, 'peer');
+    }
+
+    receiveRoomClock(payload) {
+      if (!this.isPeerTournament() || !this.tournament.waitingForRemoteClock) return;
+      const white = Number(payload.white);
+      const black = Number(payload.black);
+      if (!Number.isFinite(white) || !Number.isFinite(black)) return;
+      this.tournament.waitingForRemoteClock = false;
+      this.clock.sync({
+        white: Math.min(this.tournament.baseMs + this.tournament.incrementMs * 200, white),
+        black: Math.min(this.tournament.baseMs + this.tournament.incrementMs * 200, black),
+        activeColor: this.playerColor()
+      });
+      this.renderClocks();
+      ui.hint.textContent = 'Your clock is running. Touch a piece to begin your move.';
     }
 
     refreshEngineProfile() {
+      if (this.engineKind() === 'peer') {
+        ui.selectedEngineName.textContent = 'Another device';
+        ui.selectedEngineStats.textContent = `Local WebSocket room · code ${this.roomClient.room || 'pending'} · no cloud service`;
+        return;
+      }
       const custom = this.engineKind() === 'custom';
       const depth = ui.depth.value;
       ui.selectedEngineName.textContent = this.engineName();
@@ -251,6 +445,25 @@
       ui.selectedEngineStats.textContent = this.lastEngineStats ? `${base} · ${this.lastEngineStats}` : base;
     }
     setEngineControls() {
+      const peer = this.engineKind() === 'peer';
+      ui.depthControl.hidden = peer;
+      ui.analysisCardTitle.textContent = peer ? 'Device connection' : 'Position analysis';
+      if (peer) {
+        ui.engineSectionTitle.textContent = 'Tournament opponent';
+        ui.engineSelectLabel.textContent = 'Opponent';
+        ui.opponentDescription.textContent = `${this.opponentName()} plays ${this.opponentColor() === 'w' ? 'White' : 'Black'} through the local tournament room.`;
+        this.refreshEngineProfile();
+        ui.engineLabel.textContent = 'Local network';
+        ui.engineDot.className = `engine-dot ${this.roomClient.status === 'connected' ? 'online' : 'offline'}`;
+        ui.engineDot.title = this.roomClient.status === 'connected' ? 'Other device connected' : 'Other device disconnected';
+        ui.engineMessage.textContent = this.roomClient.status === 'connected' ? 'Both devices are connected through the host computer.' : 'Waiting for the other device.';
+        ui.evalScore.textContent = '↔';
+        ui.evalMeter.style.width = '50%';
+        ui.pv.textContent = `Room ${this.roomClient.room || 'pending'} · moves and clocks stay on the local network.`;
+        ui.connect.disabled = true;
+        ui.connect.textContent = this.roomClient.status === 'connected' ? 'Device connected' : 'Waiting for device';
+        return;
+      }
       const custom = this.engineKind() === 'custom';
       const key = custom ? 'custom' : 'stockfish';
       const minDepth = custom ? 1 : 2;
@@ -263,7 +476,7 @@
       ui.engineSectionTitle.textContent = this.isTournament() ? 'Tournament opponent' : 'Analysis';
       ui.engineSelectLabel.textContent = this.isTournament() ? 'Opponent engine' : 'Analysis engine';
       ui.opponentDescription.textContent = this.isTournament()
-        ? `${this.engineName()} plays ${this.engineColor() === 'w' ? 'White' : 'Black'} in this timed match.`
+        ? `${this.engineName()} plays ${this.opponentColor() === 'w' ? 'White' : 'Black'} in this timed match.`
         : custom ? 'Use CustomChessEngine for local classical analysis.' : 'Use Stockfish for local position analysis.';
       this.refreshEngineProfile();
       ui.engineLabel.textContent = this.engineName();
@@ -299,7 +512,7 @@
 
     handleCameraKey(event, isDown) {
       const target = event.target;
-      if (target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement || ui.promotion.open || ui.rules.open) return;
+      if (target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement || ui.promotion.open || ui.rules.open || ui.peerDialog.open) return;
       const keys = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyI', 'KeyJ', 'KeyK', 'KeyL', 'Space', 'ShiftLeft', 'ShiftRight']);
       if (!keys.has(event.code)) return;
       event.preventDefault();
@@ -326,7 +539,7 @@
     resetCamera() { Object.assign(this.cameraState, { pitch: 54, yaw: 0, panX: 0, panY: 0, zoom: 1 }); this.applyCamera(); }
 
     isPlayerTurnReady() {
-      return this.isTournament() && !this.isGameOver() && !this.engineThinking && !this.tournament.awaitingClockPress && !this.tournament.waitingForEngine && this.game.turn === this.playerColor() && this.clock?.activeColor === this.playerColor();
+      return this.isTournament() && !this.isGameOver() && !this.engineThinking && !this.tournament.awaitingClockPress && !this.tournament.waitingForEngine && !this.tournament.waitingForRemoteClock && !this.tournament.connectionLost && (!this.isPeerTournament() || this.roomClient.status === 'connected') && this.game.turn === this.playerColor() && this.clock?.activeColor === this.playerColor();
     }
     beginTournamentDrag(square) {
       if (!this.isPlayerTurnReady()) {
@@ -390,9 +603,14 @@
       ui.promotion.showModal();
     }
 
-    commitMove(move, fromEngine = false) {
+    commitMove(move, source = 'local') {
+      const beforeFen = this.game.fen();
       const { san } = this.game.apply(move);
       this.clearSelection(false);
+      if (this.isPeerTournament() && source === 'local') {
+        const uci = `${squareName(move.from.r, move.from.c)}${squareName(move.to.r, move.to.c)}${move.promotionChoice || ''}`;
+        this.roomClient.send('move', { uci, beforeFen });
+      }
       if (this.game.result) {
         this.clock?.stop();
         this.render();
@@ -402,8 +620,11 @@
       }
       this.render();
       if (this.isTournament()) {
-        if (fromEngine) this.completeEngineTurn(san);
-        else this.awaitPlayerClockPress(san);
+        if (source === 'engine') this.completeEngineTurn(san);
+        else if (source === 'peer') {
+          this.tournament.waitingForRemoteClock = true;
+          ui.hint.textContent = `${this.opponentName()} played ${san}. Waiting for their clock press…`;
+        } else this.awaitPlayerClockPress(san);
       } else {
         ui.hint.textContent = `${san} recorded. ${this.game.turn === 'w' ? 'White' : 'Black'} to move.`;
       }
@@ -418,19 +639,25 @@
       if (!this.isTournament() || color !== this.playerColor() || !this.tournament.awaitingClockPress) return;
       if (!this.clock.press(color)) return;
       this.tournament.awaitingClockPress = false;
-      this.clock.start(this.engineColor());
+      this.clock.start(this.opponentColor());
       this.renderClocks();
-      ui.hint.textContent = `${this.opponentName()} is considering the position…`;
-      this.maybeEngineTurn();
+      if (this.isPeerTournament()) {
+        const snapshot = this.clock.snapshot();
+        this.roomClient.send('clock', { white: snapshot.white, black: snapshot.black });
+        ui.hint.textContent = 'Waiting for the other player’s move…';
+      } else {
+        ui.hint.textContent = `${this.opponentName()} is considering the position…`;
+        this.maybeEngineTurn();
+      }
     }
     completeEngineTurn(san) {
       if (this.isGameOver()) return;
-      if (!this.clock.press(this.engineColor())) return;
+      if (!this.clock.press(this.opponentColor())) return;
       this.clock.start(this.playerColor());
       this.renderClocks();
       ui.hint.textContent = `${this.opponentName()} played ${san} and pressed the clock. Your move.`;
     }
-    handleTimeout(color) {
+    handleTimeout(color, fromPeer = false) {
       if (!this.isTournament() || this.timeoutResult) return;
       const winner = color === 'w' ? 'Black' : 'White';
       this.timeoutResult = `${winner} wins by timeout`;
@@ -439,11 +666,12 @@
       this.render();
       ui.hint.textContent = this.timeoutResult;
       this.showToast(this.timeoutResult);
+      if (this.isPeerTournament() && !fromPeer) this.roomClient.send('timeout', { color });
     }
 
     maybeEngineTurn() {
-      if (!this.isTournament() || this.isGameOver() || this.tournament.awaitingClockPress || this.tournament.waitingForEngine) return;
-      const engineColor = this.engineColor();
+      if (!this.isTournament() || this.isPeerTournament() || this.isGameOver() || this.tournament.awaitingClockPress || this.tournament.waitingForEngine) return;
+      const engineColor = this.opponentColor();
       if (engineColor !== this.game.turn || this.clock?.activeColor !== engineColor || this.engineThinking) return;
       const kind = this.engineKind();
       if (kind === 'stockfish' && this.engine.status !== 'online') return;
@@ -462,7 +690,7 @@
           ui.evalScore.textContent = `${result.score >= 0 ? '+' : ''}${(result.score / 100).toFixed(2)}`;
           ui.evalMeter.style.width = `${Math.max(4, Math.min(96, 50 + result.score / 24))}%`;
           ui.pv.textContent = `${result.style} · depth ${result.depth} · ${Number(result.nodes).toLocaleString()} nodes`;
-          this.commitMove(move, true);
+          this.commitMove(move, 'engine');
         }).catch(error => {
           if (token !== this.engineRequestToken) return;
           this.engineThinking = false;
@@ -478,6 +706,11 @@
 
     newGame() {
       if (this.isTournament()) {
+        if (this.isPeerTournament()) {
+          this.resetTournamentBoard(true);
+          this.showToast('Network tournament restarted on both devices.');
+          return;
+        }
         const config = { ...this.tournament };
         this.startTournament(config);
         this.showToast('Tournament restarted with the same match settings.');
@@ -488,6 +721,20 @@
       this.render();
       ui.hint.textContent = 'New analysis board ready. White to move.';
       this.analyse();
+    }
+    resetTournamentBoard(broadcast) {
+      if (!this.isPeerTournament()) return;
+      this.game.reset();
+      this.timeoutResult = null;
+      this.tournament.awaitingClockPress = false;
+      this.tournament.waitingForRemoteClock = false;
+      this.tournament.connectionLost = false;
+      this.clearSelection(false);
+      this.clock.reset();
+      this.clock.start('w');
+      this.render();
+      ui.hint.textContent = this.playerColor() === 'w' ? 'Your clock is running. Touch a piece to begin your move.' : 'Waiting for the other player’s move…';
+      if (broadcast) this.roomClient.send('restart');
     }
     undo() {
       if (this.isTournament()) { this.showToast('Take-backs are disabled in tournament simulation.'); return; }
@@ -505,6 +752,7 @@
     }
     analyse() { if (this.engineKind() === 'stockfish' && this.engine.status === 'online') this.engine.analyse(this.game.fen(), Number(ui.depth.value)); }
     connectEngine(silent = false) {
+      if (this.engineKind() === 'peer') { this.showToast('The other device connects through the tournament room.'); return; }
       if (this.engineKind() === 'custom') { this.showToast('The custom engine runs locally in this browser.'); return; }
       this.engine.connect().then(() => {
         this.analyse();
@@ -550,7 +798,7 @@
       const turnIcon = this.game.turn === 'w' ? '♔' : '♚';
       ui.turn.innerHTML = `<span class="turn-piece ${turnColor}">${turnIcon}</span><span>${result || `${this.game.turn === 'w' ? 'White' : 'Black'} to move`}</span>`;
       ui.sessionStatus.innerHTML = this.isTournament()
-        ? `<span class="pulse"></span> Tournament simulation · ${this.tournament.label}`
+        ? `<span class="pulse"></span> ${this.isPeerTournament() ? `Network room ${this.roomClient.room}` : 'Tournament simulation'} · ${this.tournament.label}`
         : '<span class="pulse"></span> Practice table · Local session';
     }
     renderMoves() {
