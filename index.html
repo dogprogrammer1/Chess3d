@@ -14,11 +14,11 @@
   <body>
     <div class="app-shell">
       <header class="topbar">
-        <a class="brand" href="#" aria-label="Tournament Room home">
+        <a class="brand" id="open-mode-menu" href="#" aria-label="Open session menu">
           <span class="brand-mark" aria-hidden="true">&#9822;</span>
           <span>Tournament <em>Room</em></span>
         </a>
-        <div class="event-status"><span class="pulse"></span> Practice table &middot; Local session</div>
+        <div class="event-status" id="session-status"><span class="pulse"></span> Practice table &middot; Local session</div>
         <div class="topbar-actions">
           <button class="text-button" id="save-game">Save game</button>
           <button class="profile-button" type="button" title="Account features are coming soon" aria-label="Account features coming soon">CS</button>
@@ -34,15 +34,9 @@
             <button class="rail-action" id="flip-board"><span>&#8635;</span> Flip board</button>
           </section>
           <section class="rail-section mode-section">
-            <p class="eyebrow">Opponent</p>
-            <label class="select-label" for="game-mode">Game mode</label>
-            <select id="game-mode">
-              <option value="analysis">Analysis board</option>
-              <option value="engine-black">Play selected engine &middot; Black</option>
-              <option value="engine-white">Play selected engine &middot; White</option>
-            </select>
-            <p class="opponent-description" id="opponent-description">Choose an opponent or use the board for analysis.</p>
-            <label class="select-label" for="engine-select">Select engine</label>
+            <p class="eyebrow" id="engine-section-title">Analysis</p>
+            <p class="opponent-description" id="opponent-description">Choose an engine for local position analysis.</p>
+            <label class="select-label" for="engine-select" id="engine-select-label">Analysis engine</label>
             <select id="engine-select">
               <option value="stockfish" selected>Stockfish</option>
               <option value="custom">CustomChessEngine</option>
@@ -71,6 +65,15 @@
               <p class="eyebrow">Tournament training</p>
               <h1 id="game-title">Analysis board</h1>
             </div>
+            <div class="tournament-clocks" id="tournament-clocks" hidden aria-label="Tournament clocks">
+              <button class="chess-clock white-clock" id="white-clock" type="button" data-color="w" aria-label="White clock">
+                <span class="clock-side">White</span><strong id="white-clock-time">5:00</strong>
+              </button>
+              <div class="time-control-label" id="time-control-label">5 + 0</div>
+              <button class="chess-clock black-clock" id="black-clock" type="button" data-color="b" aria-label="Black clock">
+                <span class="clock-side">Black</span><strong id="black-clock-time">5:00</strong>
+              </button>
+            </div>
             <div class="turn-indicator" id="turn-indicator"><span class="turn-piece white-piece">&#9812;</span><span>White to move</span></div>
           </div>
 
@@ -78,8 +81,9 @@
             <div class="scene-light light-one"></div>
             <div class="scene-light light-two"></div>
             <div class="board-wrap" id="board-wrap">
-              <div class="board-base" aria-hidden="true"></div>
-              <div class="chessboard" id="chessboard" role="grid" aria-label="Chess board"></div>
+              <canvas class="chessboard solid-board-canvas" id="chessboard" tabindex="0" role="application" aria-label="Interactive 3D chess board">
+                WebGL is required to render the interactive 3D chess board.
+              </canvas>
             </div>
           </div>
           <div class="board-hint" id="board-hint">Select a piece to see its legal moves.</div>
@@ -133,12 +137,76 @@
       </form>
     </dialog>
 
+    <dialog id="tournament-rules" class="rules-dialog">
+      <form method="dialog">
+        <p class="eyebrow">Tournament simulation</p>
+        <h2>Over-the-board rules</h2>
+        <p>Touch-move is enforced: once you select one of your pieces, it must make a legal move. The piece will follow your cursor while you choose its destination.</p>
+        <p>Your clock keeps running after you move. Press your clock to complete the turn and start your opponent's clock. The engine presses its clock automatically after moving.</p>
+        <div class="dialog-actions">
+          <button class="text-button" id="rules-cancel" type="button">Back</button>
+          <button class="primary-action dialog-primary" id="rules-start" type="button">I understand &middot; Start game</button>
+        </div>
+      </form>
+    </dialog>
+
+    <section class="mode-menu" id="mode-menu" aria-labelledby="mode-menu-title">
+      <div class="mode-menu-panel">
+        <p class="eyebrow">Tournament Room</p>
+        <h1 id="mode-menu-title">Choose your session</h1>
+        <p class="mode-menu-copy">Prepare variations freely, or rehearse the rhythm and pressure of a timed tournament game.</p>
+        <div class="mode-choice-grid" id="mode-choice-grid">
+          <button class="mode-choice analysis-choice" id="launch-analysis" type="button">
+            <span class="mode-choice-kicker">Explore</span>
+            <strong>Analysis board</strong>
+            <span>Free movement, legal move guidance, and engine evaluation.</span>
+          </button>
+          <button class="mode-choice tournament-choice" id="launch-tournament-setup" type="button">
+            <span class="mode-choice-kicker">Compete</span>
+            <strong>Tournament simulation</strong>
+            <span>Touch-move, clocks, and an engine opponent at the table.</span>
+          </button>
+        </div>
+        <div class="tournament-setup" id="tournament-setup" hidden>
+          <div class="setup-heading">
+            <div><p class="eyebrow">Match setup</p><h2>Set the board</h2></div>
+            <button class="text-button" id="back-to-mode-choice" type="button">Back</button>
+          </div>
+          <div class="setup-grid">
+            <label class="select-label" for="tournament-opponent">Opponent
+              <select id="tournament-opponent">
+                <option value="stockfish">Stockfish</option>
+                <option value="custom">CustomChessEngine &middot; aggressive ~1900</option>
+              </select>
+            </label>
+            <label class="select-label" for="tournament-color">Your color
+              <select id="tournament-color">
+                <option value="w">White</option>
+                <option value="b">Black</option>
+              </select>
+            </label>
+            <label class="select-label" for="tournament-time-control">Time control
+              <select id="tournament-time-control">
+                <option value="1|0">Bullet &middot; 1 + 0</option>
+                <option value="3|2">Blitz &middot; 3 + 2</option>
+                <option value="5|0" selected>Blitz &middot; 5 + 0</option>
+                <option value="10|0">Rapid &middot; 10 + 0</option>
+              </select>
+            </label>
+          </div>
+          <button class="primary-action start-tournament" id="open-tournament-rules" type="button">Review rules &middot; Start tournament</button>
+        </div>
+      </div>
+    </section>
+
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
     <script src="js/chess.js"></script>
     <script src="js/storage.js"></script>
     <script src="js/stockfish.js"></script>
     <script src="js/custom-engine.js"></script>
+    <script src="js/tournament-clock.js"></script>
+    <script src="js/solid-board.js"></script>
     <script src="js/renderer.js"></script>
     <script src="js/app.js"></script>
   </body>

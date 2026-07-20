@@ -1,6 +1,7 @@
 param(
   [int]$Port = 8787,
-  [string]$Root = (Split-Path -Parent $PSScriptRoot)
+  [string]$Root = (Split-Path -Parent $PSScriptRoot),
+  [switch]$OpenBrowser
 )
 
 $rootPath = [IO.Path]::GetFullPath($Root).TrimEnd([IO.Path]::DirectorySeparatorChar)
@@ -8,6 +9,7 @@ $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $Port)
 $listener.Start()
 Write-Host "Tournament Room is available at http://127.0.0.1:$Port/"
 Write-Host "Press Ctrl+C to stop the local web server."
+if ($OpenBrowser) { Start-Process "http://127.0.0.1:$Port/" }
 
 $contentTypes = @{ '.html' = 'text/html; charset=utf-8'; '.css' = 'text/css; charset=utf-8'; '.js' = 'text/javascript; charset=utf-8'; '.json' = 'application/json; charset=utf-8'; '.svg' = 'image/svg+xml'; '.png' = 'image/png'; '.ico' = 'image/x-icon' }
 try {

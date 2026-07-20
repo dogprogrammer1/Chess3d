@@ -1,8 +1,6 @@
-/* DOM-backed 3D board renderer. CSS perspective keeps interaction accessible
- * while the renderer remains replaceable by a future WebGL scene. */
+/* Input coordinator for the single-canvas WebGL chess board. */
 (function () {
   'use strict';
-  const { FILES, squareName } = window.ChessDomain;
 
   class BoardRenderer {
     constructor(element, onSquareClick) {
@@ -13,77 +11,75 @@
       this.legalMoves = [];
       this.game = null;
       this.dragStart = null;
+      this.tournamentController = null;
+      this.draggingTournamentPiece = false;
+      this.solidScene = window.TournamentSolidBoard ? new window.TournamentSolidBoard.SolidBoardScene(element) : null;
+      if (this.solidScene?.available) this.bindSolidPointerEvents();
     }
     setOrientation(color) { this.orientation = color; this.render(); }
     setSelection(square, moves) { this.selected = square; this.legalMoves = moves || []; this.render(); }
     clearSelection() { this.setSelection(null, []); }
     setGame(game) { this.game = game; this.render(); }
+    setCamera(camera) { this.solidScene?.setCamera(camera); }
+    setTournamentController(controller) {
+      this.tournamentController = controller;
+      this.cancelTournamentDrag();
+    }
+    cancelTournamentDrag() {
+      this.draggingTournamentPiece = false;
+      this.solidScene?.clearDragPiece();
+    }
+
+    bindSolidPointerEvents() {
+      const canvas = this.solidScene.canvas;
+      canvas.addEventListener('pointerdown', event => {
+        if (event.button !== undefined && event.button !== 0) return;
+        const square = this.solidScene.pickSquare(event.clientX, event.clientY);
+        if (this.tournamentController?.isActive?.()) {
+          const drag = this.tournamentController.beginDrag(square);
+          if (!drag) return;
+          this.dragStart = drag.from;
+          this.draggingTournamentPiece = true;
+          this.solidScene.setDragPiece(drag.piece, drag.from);
+          this.solidScene.updateDragFromPointer(event.clientX, event.clientY);
+        } else {
+          this.dragStart = square;
+        }
+        if (this.dragStart) canvas.setPointerCapture?.(event.pointerId);
+      });
+      canvas.addEventListener('pointermove', event => {
+        if (this.draggingTournamentPiece) this.solidScene.updateDragFromPointer(event.clientX, event.clientY);
+      });
+      canvas.addEventListener('pointerup', event => {
+        if (event.button !== undefined && event.button !== 0) return;
+        event.preventDefault();
+        const start = this.dragStart;
+        const destination = this.solidScene.pickSquare(event.clientX, event.clientY);
+        this.dragStart = null;
+        if (canvas.hasPointerCapture?.(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+        if (this.tournamentController?.isActive?.()) {
+          const wasDragging = this.draggingTournamentPiece;
+          this.cancelTournamentDrag();
+          if (wasDragging) this.tournamentController.drop(destination, start);
+          return;
+        }
+        if (!destination) return;
+        if (start && (start.r !== destination.r || start.c !== destination.c)) {
+          this.onSquareClick(start);
+          this.onSquareClick(destination);
+        } else {
+          this.onSquareClick(destination);
+        }
+      });
+      canvas.addEventListener('pointercancel', () => { this.dragStart = null; this.cancelTournamentDrag(); });
+    }
 
     render() {
       if (!this.game) return;
-      const board = this.element;
-      board.replaceChildren();
-      const ranks = this.orientation === 'w' ? [0,1,2,3,4,5,6,7] : [7,6,5,4,3,2,1,0];
-      const files = this.orientation === 'w' ? [0,1,2,3,4,5,6,7] : [7,6,5,4,3,2,1,0];
-      const legalByTarget = new Map(this.legalMoves.map(move => [`${move.to.r},${move.to.c}`, move]));
-      const checkKing = this.game.isInCheck() ? this.game.kingSquare(this.game.turn) : null;
-      ranks.forEach((r, visualR) => files.forEach((c, visualC) => {
-        const piece = this.game.getPiece(r, c);
-        const square = document.createElement('button');
-        square.type = 'button';
-        square.className = `square ${(r + c) % 2 ? 'dark' : 'light'}`;
-        square.dataset.rank = r; square.dataset.file = c;
-        square.setAttribute('role', 'gridcell');
-        square.setAttribute('aria-label', `${squareName(r, c)}${piece ? `, ${piece.color === 'w' ? 'white' : 'black'} ${this.pieceName(piece.type)}` : ', empty'}`);
-        if (this.selected?.r === r && this.selected?.c === c) square.classList.add('selected');
-        if (this.game.lastMove && ((this.game.lastMove.from.r === r && this.game.lastMove.from.c === c) || (this.game.lastMove.to.r === r && this.game.lastMove.to.c === c))) square.classList.add('last-move');
-        if (checkKing?.r === r && checkKing?.c === c) square.classList.add('in-check');
-        const targetMove = legalByTarget.get(`${r},${c}`);
-        if (targetMove) {
-          square.classList.add('legal');
-          if (targetMove.capture || targetMove.enPassant) square.classList.add('capture');
-        }
-        if (visualC === 0) square.append(this.label(String(8 - r), 'rank-label'));
-        if (visualR === 7) square.append(this.label(FILES[c], 'file-label'));
-        if (piece) {
-          const token = document.createElement('span');
-          token.className = `piece ${piece.color === 'w' ? 'white' : 'black'}`;
-          token.textContent = this.game.getSymbol(piece);
-          token.setAttribute('aria-hidden', 'true');
-          square.append(token);
-        }
-        square.addEventListener('pointerdown', event => {
-          if (event.button !== undefined && event.button !== 0) return;
-          this.dragStart = { r, c };
-        });
-        square.addEventListener('pointerup', event => {
-          if (event.button !== undefined && event.button !== 0) return;
-          event.preventDefault();
-          const start = this.dragStart;
-          this.dragStart = null;
-          const hitSquare = document.elementFromPoint(event.clientX, event.clientY)?.closest('.square');
-          const destination = hitSquare
-            ? { r: Number(hitSquare.dataset.rank), c: Number(hitSquare.dataset.file) }
-            : { r, c };
-          // A short tap selects/moves; dragging directly from one square to
-          // another also works, without requiring a pixel-perfect piece click.
-          if (start && (start.r !== destination.r || start.c !== destination.c)) {
-            this.onSquareClick(start);
-            this.onSquareClick(destination);
-          } else {
-            this.onSquareClick(destination);
-          }
-        });
-        square.addEventListener('click', event => {
-          // Pointer activation is handled above. Keep keyboard activation
-          // accessible without making a mouse/touch action fire twice.
-          if (event.detail === 0) this.onSquareClick({ r, c });
-        });
-        board.append(square);
-      }));
+      const turn = this.game.turn === 'w' ? 'White' : 'Black';
+      this.element.setAttribute('aria-label', `${turn} to move on the interactive 3D chess board.`);
+      this.solidScene?.setPosition(this.game, this.orientation, this.selected, this.legalMoves);
     }
-    label(text, className) { const label = document.createElement('span'); label.className = `coordinate ${className}`; label.textContent = text; return label; }
-    pieceName(type) { return ({ p: 'pawn', n: 'knight', b: 'bishop', r: 'rook', q: 'queen', k: 'king' })[type]; }
   }
   window.TournamentRenderer = { BoardRenderer };
 })();

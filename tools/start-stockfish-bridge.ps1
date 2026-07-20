@@ -1,6 +1,7 @@
 param(
   [string]$EnginePath = (Join-Path (Split-Path -Parent $PSScriptRoot) 'lib\stockfish\stockfish-windows-x86-64-avx2.exe'),
-  [int]$Port = 8765
+  [int]$Port = 8765,
+  [int]$ParentProcessId = 0
 )
 
 # Local-only UCI bridge. Browsers cannot launch a Windows executable directly;
@@ -71,6 +72,10 @@ function Send-WebSocketText([IO.Stream]$Stream, [string]$Text) {
   $Stream.Write($head, 0, $head.Length); $Stream.Write($payload, 0, $payload.Length)
 }
 function Send-BridgeJson([IO.Stream]$Stream, $Object) { Send-WebSocketText $Stream ($Object | ConvertTo-Json -Compress -Depth 4) }
+function Test-ParentIsRunning {
+  if ($ParentProcessId -le 0) { return $true }
+  try { return !(Get-Process -Id $ParentProcessId -ErrorAction Stop).HasExited } catch { return $false }
+}
 
 $processInfo = [Diagnostics.ProcessStartInfo]::new()
 $processInfo.FileName = $EnginePath
@@ -117,7 +122,11 @@ $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $Port)
 $listener.Start()
 Write-Host "Stockfish bridge running at ws://127.0.0.1:$Port/ (local connections only)"
 try {
-  while ($true) {
+  while (Test-ParentIsRunning) {
+    while (!$listener.Pending()) {
+      if (!(Test-ParentIsRunning)) { return }
+      Start-Sleep -Milliseconds 100
+    }
     $client = $listener.AcceptTcpClient()
     try {
       $stream = Start-WebSocket $client
