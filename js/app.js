@@ -14,7 +14,7 @@
     board: $('chessboard'), title: $('game-title'), turn: $('turn-indicator'), hint: $('board-hint'), sessionStatus: $('session-status'),
     newGame: $('new-game'), undo: $('undo-move'), flip: $('flip-board'), engineSelect: $('engine-select'), engineSectionTitle: $('engine-section-title'), engineSelectLabel: $('engine-select-label'), depth: $('engine-depth'), depthValue: $('depth-value'), opponentDescription: $('opponent-description'), selectedEngineName: $('selected-engine-name'), selectedEngineStats: $('selected-engine-stats'),
     camera: $('camera-tilt'), resetCamera: $('reset-camera'), save: $('save-game'), moveList: $('move-list'), copyPgn: $('copy-pgn'), copyFen: $('copy-fen'), fen: $('fen-value'),
-    connect: $('connect-engine'), engineDot: $('engine-dot'), engineLabel: $('engine-label'), engineMessage: $('engine-message'), evalScore: $('eval-score'), evalMeter: $('eval-meter-fill'), pv: $('pv-line'), analysisCardTitle: $('analysis-card-title'), depthControl: $('engine-depth-control'),
+    connect: $('connect-engine'), engineDot: $('engine-dot'), engineLabel: $('engine-label'), engineMessage: $('engine-message'), evalScore: $('eval-score'), evalMeter: $('eval-meter-fill'), pv: $('pv-line'), analysisCard: $('analysis-card'), analysisCardTitle: $('analysis-card-title'), depthControl: $('engine-depth-control'),
     promotion: $('promotion-dialog'), promotionOptions: $('promotion-options'), toast: $('toast'),
     menu: $('mode-menu'), openMenu: $('open-mode-menu'), launchAnalysis: $('launch-analysis'), launchTournamentSetup: $('launch-tournament-setup'), modeChoiceGrid: $('mode-choice-grid'), tournamentSetup: $('tournament-setup'), backToModeChoice: $('back-to-mode-choice'), tournamentOpponent: $('tournament-opponent'), tournamentColor: $('tournament-color'), tournamentColorLabel: $('tournament-color-label'), tournamentTimeControl: $('tournament-time-control'), peerRoleField: $('peer-role-field'), peerRole: $('peer-role'), openTournamentRules: $('open-tournament-rules'), rules: $('tournament-rules'), rulesEyebrow: $('rules-eyebrow'), rulesTitle: $('rules-title'), rulesClockCopy: $('rules-clock-copy'), rulesStart: $('rules-start'), rulesCancel: $('rules-cancel'),
     peerDialog: $('peer-dialog'), peerDialogTitle: $('peer-dialog-title'), peerStatus: $('peer-status'), peerHostFlow: $('peer-host-flow'), peerGuestFlow: $('peer-guest-flow'), peerRoomOutput: $('peer-room-output'), copyPeerRoom: $('copy-peer-room'), peerRoomInput: $('peer-room-input'), joinPeerRoom: $('join-peer-room'), peerError: $('peer-error'), cancelPeerPairing: $('cancel-peer-pairing'),
@@ -113,7 +113,7 @@
         if (status === 'offline') { ui.connect.disabled = false; ui.connect.textContent = 'Connect engine'; this.engineThinking = false; if (!this.isTournament()) ui.engineMessage.textContent = detail || 'Engine offline. Start the local bridge to analyse this board.'; }
       });
       this.engine.onAnalysis = message => {
-        if (this.engineKind() !== 'stockfish' || message.fen !== this.game.fen()) return;
+        if (this.isTournament() || this.engineKind() !== 'stockfish' || message.fen !== this.game.fen()) return;
         const whiteScore = this.game.turn === 'w' ? Number(message.score) : -Number(message.score);
         const display = message.scoreType === 'mate' ? `M${whiteScore > 0 ? '+' : ''}${whiteScore}` : `${whiteScore >= 0 ? '+' : ''}${(whiteScore / 100).toFixed(2)}`;
         this.lastEngineStats = `${Number(message.nodes || 0).toLocaleString()} nodes · depth ${message.depth || ui.depth.value}`;
@@ -445,6 +445,7 @@
       ui.selectedEngineStats.textContent = this.lastEngineStats ? `${base} · ${this.lastEngineStats}` : base;
     }
     setEngineControls() {
+      ui.analysisCard.hidden = this.isTournament();
       const peer = this.engineKind() === 'peer';
       ui.depthControl.hidden = peer;
       ui.analysisCardTitle.textContent = peer ? 'Device connection' : 'Position analysis';
@@ -687,9 +688,6 @@
           if (!move) { this.showToast('Custom engine could not resolve a legal move.'); return; }
           this.lastEngineStats = `${Number(result.nodes).toLocaleString()} nodes · ${Math.round(result.elapsedMs)} ms`;
           this.refreshEngineProfile();
-          ui.evalScore.textContent = `${result.score >= 0 ? '+' : ''}${(result.score / 100).toFixed(2)}`;
-          ui.evalMeter.style.width = `${Math.max(4, Math.min(96, 50 + result.score / 24))}%`;
-          ui.pv.textContent = `${result.style} · depth ${result.depth} · ${Number(result.nodes).toLocaleString()} nodes`;
           this.commitMove(move, 'engine');
         }).catch(error => {
           if (token !== this.engineRequestToken) return;
@@ -750,7 +748,10 @@
       this.renderer.cancelTournamentDrag();
       if (render) this.renderer.render();
     }
-    analyse() { if (this.engineKind() === 'stockfish' && this.engine.status === 'online') this.engine.analyse(this.game.fen(), Number(ui.depth.value)); }
+    analyse() {
+      if (this.isTournament()) return;
+      if (this.engineKind() === 'stockfish' && this.engine.status === 'online') this.engine.analyse(this.game.fen(), Number(ui.depth.value));
+    }
     connectEngine(silent = false) {
       if (this.engineKind() === 'peer') { this.showToast('The other device connects through the tournament room.'); return; }
       if (this.engineKind() === 'custom') { this.showToast('The custom engine runs locally in this browser.'); return; }

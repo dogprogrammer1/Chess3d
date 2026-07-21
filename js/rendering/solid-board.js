@@ -7,6 +7,7 @@
   const TAU = Math.PI * 2;
   const FILES = 'abcdefgh';
   const PIECE_SCALE = .86;
+  const PAWN_SCALE = .88;
   const WHITE = [0.86, 0.82, 0.72];
   const BLACK = [0.055, 0.17, 0.15];
   const LIGHT_TILE = [0.74, 0.65, 0.48];
@@ -435,7 +436,7 @@
     drawPiece(piece, x, z, scaleMultiplier = 1, lift = 0) {
       const color = piece.color === 'w' ? WHITE : BLACK;
       const reverse = piece.color === 'w' ? Math.PI : 0;
-      const size = PIECE_SCALE * scaleMultiplier;
+      const size = PIECE_SCALE * scaleMultiplier * (piece.type === 'p' ? PAWN_SCALE : 1);
       const draw = (mesh, y, shine = .48, rotation = 0, scale = 1) => this.drawMesh(mesh, x, y * size + lift, z, color, shine, rotation, scale * size);
       draw(this.mesh.common, .08);
       if (piece.type === 'p') { draw(this.mesh.pawn, 0); draw(this.mesh.sphere, .93, .58, 0, 1); return; }

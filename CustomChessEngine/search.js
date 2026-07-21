@@ -1,5 +1,9 @@
 import { pieceValues } from "./tables.js";
 
+// Reserve a score range that no classical evaluation can overtake.
+export const MATE_SCORE = 1_000_000;
+const MATE_SCORE_THRESHOLD = MATE_SCORE - 1_000;
+
 export const searchMethods = {
     findBestMove(depth) {
         const MAXDEPTH = 10;
@@ -32,7 +36,7 @@ export const searchMethods = {
             for (const move of moves) {
                 const undo = this.board.makeMove(move.x1, move.y1, move.x2, move.y2);
                 this.board.turn = 1 - this.board.turn;
-                const score = this.minimax(currentDepth - 1, -Infinity, Infinity);
+                const score = this.minimax(currentDepth - 1, -Infinity, Infinity, 1);
                 this.board.unmakeMove(undo);
                 
                 if (this.color === 0) {
@@ -73,39 +77,69 @@ export const searchMethods = {
         return pieceValues[type] ?? 0;
     },
 
-    minimax(depth, alpha, beta) {
+    getCheckmateScore(plyFromRoot) {
+        return this.board.turn === 0
+            ? -MATE_SCORE + plyFromRoot
+            : MATE_SCORE - plyFromRoot;
+    },
+
+    scoreToTransposition(score, plyFromRoot) {
+        if (score >= MATE_SCORE_THRESHOLD) return score + plyFromRoot;
+        if (score <= -MATE_SCORE_THRESHOLD) return score - plyFromRoot;
+        return score;
+    },
+
+    scoreFromTransposition(score, plyFromRoot) {
+        if (score >= MATE_SCORE_THRESHOLD) return score - plyFromRoot;
+        if (score <= -MATE_SCORE_THRESHOLD) return score + plyFromRoot;
+        return score;
+    },
+
+    minimax(depth, alpha, beta, plyFromRoot = 0) {
         const maximizingPlayer = this.board.turn === 0;
         this.nodesEvaluated++;
         // Get zobrist hash for transposition table lookup
         const zobristHash = this.calculateZobristHash();
-        
+
+        // A checked side with no legal response is checkmated. This must be
+        // tested before the depth cutoff so a mate on the horizon cannot be
+        // mistaken for an ordinary static or cached evaluation.
+        let moves = null;
+        if (this.board.inCheck(this.board.turn)) {
+            moves = this.board.generateLegalMoves(this.board.turn);
+            if (moves.length === 0) {
+                const score = this.getCheckmateScore(plyFromRoot);
+                this.storeTransposition(
+                    zobristHash,
+                    depth,
+                    this.scoreToTransposition(score, plyFromRoot),
+                    0
+                );
+                return score;
+            }
+        }
+
         // Transposition table lookup
         const tabEntry = this.lookupTransposition(zobristHash, depth);
         if (tabEntry) {
-            if (tabEntry.flag === 0) return tabEntry.score; // Exact score
-            if (tabEntry.flag === 1) alpha = Math.max(alpha, tabEntry.score); // Lower bound
-            if (tabEntry.flag === 2) beta = Math.min(beta, tabEntry.score);  // Upper bound
-            if (alpha >= beta) return tabEntry.score;
+            const tabScore = this.scoreFromTransposition(tabEntry.score, plyFromRoot);
+            if (tabEntry.flag === 0) return tabScore; // Exact score
+            if (tabEntry.flag === 1) alpha = Math.max(alpha, tabScore); // Lower bound
+            if (tabEntry.flag === 2) beta = Math.min(beta, tabScore);  // Upper bound
+            if (alpha >= beta) return tabScore;
         }
-        
+
         // Use quiescence search at leaf nodes for better tactical evaluation
         if (depth === 0) {
-            return this.quiescenceSearch(alpha, beta);
+            return this.quiescenceSearch(alpha, beta, 4, plyFromRoot);
         }
 
-        const moves = this.board.generateLegalMoves(this.board.turn);
+        moves ??= this.board.generateLegalMoves(this.board.turn);
 
         if (moves.length === 0) {
-            if (this.board.inCheck(this.board.turn)) {
-                // Checkmate: penalize based on depth (favor faster checkmates)
-                const score = maximizingPlayer ? -10000 + depth : 10000 - depth;
-                this.storeTransposition(zobristHash, depth, score, 0);
-                return score;
-            } else {
-                // Stalemate: neutral position
-                this.storeTransposition(zobristHash, depth, 0, 0);
-                return 0;
-            }
+            // The checkmate case was handled above, so this is stalemate.
+            this.storeTransposition(zobristHash, depth, 0, 0);
+            return 0;
         }
         
         let value = maximizingPlayer ? -Infinity : Infinity;
@@ -118,7 +152,7 @@ export const searchMethods = {
         for (const move of moves) {
             const undo = this.board.makeMove(move.x1, move.y1, move.x2, move.y2);
             this.board.turn = 1 - this.board.turn;
-            const childValue = this.minimax(depth - 1, alpha, beta);
+            const childValue = this.minimax(depth - 1, alpha, beta, plyFromRoot + 1);
             this.board.unmakeMove(undo);
 
             if (maximizingPlayer ? childValue > value : childValue < value) {
@@ -136,36 +170,55 @@ export const searchMethods = {
         else if (value >= betaOrig) flag = 1; // Lower bound
         else flag = 0; // Exact
         
-        this.storeTransposition(zobristHash, depth, value, flag, bestMove);
+        this.storeTransposition(
+            zobristHash,
+            depth,
+            this.scoreToTransposition(value, plyFromRoot),
+            flag,
+            bestMove
+        );
         
         return value;
     },
 
-    quiescenceSearch(alpha, beta, depthRemaining = 4) {
+    quiescenceSearch(alpha, beta, depthRemaining = 4, plyFromRoot = 0) {
         const maximizingPlayer = this.board.turn === 0;
-        const standPat = this.evaluateBoard();
-        if (depthRemaining <= 0) return standPat;
-        
-        if (maximizingPlayer) {
-            if (standPat >= beta) return beta;
-            // Delta pruning: if even the best capture can't help, return early
-            const deltaMargin = 900; // Queen value - largest expected gain
-            if (standPat + deltaMargin < alpha) return alpha;
-            alpha = Math.max(alpha, standPat);
+        const inCheck = this.board.inCheck(this.board.turn);
+        let tacticalMoves;
+        let value;
+
+        if (inCheck) {
+            tacticalMoves = this.board.generateLegalMoves(this.board.turn);
+            if (tacticalMoves.length === 0) {
+                return this.getCheckmateScore(plyFromRoot);
+            }
+            if (depthRemaining <= 0) return this.evaluateBoard();
+
+            // Standing pat is not legal while in check, so search every evasion.
+            value = maximizingPlayer ? -Infinity : Infinity;
         } else {
-            if (standPat <= alpha) return alpha;
-            const deltaMargin = 900;
-            if (standPat - deltaMargin > beta) return beta;
-            beta = Math.min(beta, standPat);
+            const standPat = this.evaluateBoard();
+            if (depthRemaining <= 0) return standPat;
+
+            if (maximizingPlayer) {
+                if (standPat >= beta) return beta;
+                // Delta pruning: if even the best capture can't help, return early
+                const deltaMargin = 900; // Queen value - largest expected gain
+                if (standPat + deltaMargin < alpha) return alpha;
+                alpha = Math.max(alpha, standPat);
+            } else {
+                if (standPat <= alpha) return alpha;
+                const deltaMargin = 900;
+                if (standPat - deltaMargin > beta) return beta;
+                beta = Math.min(beta, standPat);
+            }
+
+            tacticalMoves = this.generateCaptureMoves(this.board.turn);
+            if (tacticalMoves.length === 0) return standPat;
+            value = standPat;
         }
         
-        const tacticalMoves = this.generateCaptureMoves(this.board.turn);
-        
-        if (tacticalMoves.length === 0) {
-            return standPat;
-        }
-        
-        // Order captures with MVV-LVA
+        // Order captures (and any quiet check evasions) with MVV-LVA
         tacticalMoves.sort((a, b) => {
             const targetA = this.board.getPiece(a.x2, a.y2);
             const targetB = this.board.getPiece(b.x2, b.y2);
@@ -177,11 +230,15 @@ export const searchMethods = {
             return valueB - valueA;
         });
         
-        let value = standPat;
         for (const move of tacticalMoves) {
             const undo = this.board.makeMove(move.x1, move.y1, move.x2, move.y2);
             this.board.turn = 1 - this.board.turn;
-            const childValue = this.quiescenceSearch(alpha, beta, depthRemaining - 1);
+            const childValue = this.quiescenceSearch(
+                alpha,
+                beta,
+                depthRemaining - 1,
+                plyFromRoot + 1
+            );
             this.board.unmakeMove(undo);
 
             if (maximizingPlayer) {
