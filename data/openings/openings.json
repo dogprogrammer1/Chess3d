@@ -1,0 +1,144 @@
+{
+  "schemaVersion": 1,
+  "openings": [
+    {
+      "id": "italian",
+      "eco": "C50",
+      "name": "Italian Game",
+      "chapters": [
+        {
+          "id": "quiet-center",
+          "title": "Quiet center and c3-d4 plan",
+          "moves": ["e2e4", "e7e5", "g1f3", "b8c6", "f1c4", "g8f6", "d2d3", "f8c5", "c2c3", "d7d6", "e1g1"],
+          "introduction": "Develop quickly, castle, and prepare d4 without allowing a tactical counterblow in the center.",
+          "ideas": ["The bishop on c4 pressures f7.", "c3 supports the central break d4.", "Castling makes the center expansion safer."],
+          "anchors": [{"ply": 5, "text": "Bc4 develops with a concrete target on f7."}, {"ply": 9, "text": "c3 prepares d4 and gives the bishop a retreat on c2."}],
+          "summary": "White has completed development and is ready to challenge the center with d4."
+        },
+        {
+          "id": "two-knights",
+          "title": "Two Knights tactical test",
+          "moves": ["e2e4", "e7e5", "g1f3", "b8c6", "f1c4", "g8f6", "f3g5", "d7d5", "e4d5", "f6d5"],
+          "introduction": "The Two Knights line tests f7 immediately, but White must calculate Black's central counterplay.",
+          "ideas": ["Ng5 creates a direct threat against f7.", "Black answers in the center with d5.", "Development matters more than grabbing every pawn."],
+          "summary": "The opening has become tactical; both sides must balance king safety with activity."
+        }
+      ]
+    },
+    {
+      "id": "ruy-lopez",
+      "eco": "C60",
+      "name": "Ruy Lopez",
+      "chapters": [
+        {
+          "id": "morphy",
+          "title": "Morphy Defense fundamentals",
+          "moves": ["e2e4", "e7e5", "g1f3", "b8c6", "f1b5", "a7a6", "b5a4", "g8f6", "e1g1", "f8e7"],
+          "introduction": "White pressures the defender of e5, then preserves the bishop and builds a lasting central initiative.",
+          "ideas": ["Bb5 creates indirect pressure on e5.", "Ba4 keeps the bishop pair.", "Castling prepares Re1 and central expansion."],
+          "summary": "Both sides are developed; White retains long-term pressure while Black is ready to castle."
+        },
+        {
+          "id": "exchange",
+          "title": "Exchange Variation",
+          "moves": ["e2e4", "e7e5", "g1f3", "b8c6", "f1b5", "a7a6", "b5c6", "d7c6", "e1g1"],
+          "introduction": "White gives up the bishop pair to damage Black's queenside pawn structure and target the endgame.",
+          "ideas": ["Bxc6 changes the pawn structure immediately.", "Black gains the bishop pair but accepts doubled c-pawns.", "White often aims for a favorable king-and-pawn ending."],
+          "summary": "The strategic battle is bishop activity against Black's damaged queenside structure."
+        }
+      ]
+    },
+    {
+      "id": "queens-gambit",
+      "eco": "D06",
+      "name": "Queen's Gambit",
+      "chapters": [
+        {
+          "id": "declined",
+          "title": "Queen's Gambit Declined",
+          "moves": ["d2d4", "d7d5", "c2c4", "e7e6", "b1c3", "g8f6", "c1g5", "f8e7", "e2e3", "e8g8"],
+          "introduction": "White challenges d5 while Black builds a solid center and prepares safe development.",
+          "ideas": ["c4 attacks Black's central foothold.", "Nc3 increases pressure on d5.", "Bg5 makes Black solve the pin before freeing the c8 bishop."],
+          "summary": "White has space; Black is solid but must develop the queenside bishop."
+        },
+        {
+          "id": "accepted",
+          "title": "Queen's Gambit Accepted",
+          "moves": ["d2d4", "d7d5", "c2c4", "d5c4", "e2e3", "e7e5", "f1c4", "e5d4", "e3d4"],
+          "introduction": "Black accepts the pawn temporarily, while White uses the time to build a strong center and rapid development.",
+          "ideas": ["The c4 pawn is usually not meant to be held forever.", "e3 recovers the pawn with the bishop.", "Black strikes with e5 before White fully consolidates."],
+          "summary": "Material is level and White has an active isolated queen's pawn position."
+        }
+      ]
+    },
+    {
+      "id": "sicilian",
+      "eco": "B20",
+      "name": "Sicilian Defense",
+      "chapters": [
+        {
+          "id": "open",
+          "title": "Open Sicilian structure",
+          "moves": ["e2e4", "c7c5", "g1f3", "d7d6", "d2d4", "c5d4", "f3d4", "g8f6", "b1c3"],
+          "introduction": "White opens the center for development; Black accepts a space deficit in exchange for an extra central pawn and queenside play.",
+          "ideas": ["d4 converts the game into an Open Sicilian.", "Black's c-pawn trades for White's d-pawn.", "White develops quickly while Black uses the half-open c-file."],
+          "summary": "White has space and development; Black has structural central control and counterplay."
+        },
+        {
+          "id": "alapin",
+          "title": "Alapin with c3",
+          "moves": ["e2e4", "c7c5", "c2c3", "d7d5", "e4d5", "d8d5", "d2d4", "g8f6", "g1f3"],
+          "introduction": "The Alapin prepares d4 directly and reduces Black's usual queenside counterplay.",
+          "ideas": ["c3 builds a classical two-pawn center.", "Black should challenge the center immediately.", "Development with tempo becomes important after the queen recaptures."],
+          "summary": "White owns central space; Black has active piece play against it."
+        }
+      ]
+    },
+    {
+      "id": "french",
+      "eco": "C00",
+      "name": "French Defense",
+      "chapters": [
+        {
+          "id": "advance",
+          "title": "Advance Variation",
+          "moves": ["e2e4", "e7e6", "d2d4", "d7d5", "e4e5", "c7c5", "c2c3", "b8c6", "g1f3"],
+          "introduction": "White gains space with e5; Black attacks the pawn chain at its base with c5.",
+          "ideas": ["The e5 pawn grants kingside space.", "c5 challenges d4, the base of White's chain.", "White supports the center with c3 before developing."],
+          "summary": "White has space, while Black has a clear plan to undermine the center."
+        },
+        {
+          "id": "exchange",
+          "title": "Exchange Variation",
+          "moves": ["e2e4", "e7e6", "d2d4", "d7d5", "e4d5", "e6d5", "g1f3", "g8f6"],
+          "introduction": "The symmetrical pawn structure reduces tension, so piece activity and purposeful development become critical.",
+          "ideas": ["The central pawn exchange creates symmetry.", "Symmetry does not guarantee a draw; tempi still matter.", "Both sides should develop without blocking the c-pawn."],
+          "summary": "The structure is balanced and the more active pieces will determine the initiative."
+        }
+      ]
+    },
+    {
+      "id": "caro-kann",
+      "eco": "B10",
+      "name": "Caro-Kann Defense",
+      "chapters": [
+        {
+          "id": "classical",
+          "title": "Classical main line",
+          "moves": ["e2e4", "c7c6", "d2d4", "d7d5", "b1c3", "d5e4", "c3e4", "c8f5", "e4g3", "f5g6"],
+          "introduction": "Black supports d5 with c6 and develops the light-squared bishop before closing the pawn chain.",
+          "ideas": ["c6 creates a durable d5 break.", "Black releases the c8 bishop before playing e6.", "White gains space and can chase the bishop without overextending."],
+          "summary": "Black is solid and fully developed on the light squares; White has more space."
+        },
+        {
+          "id": "advance",
+          "title": "Advance Variation",
+          "moves": ["e2e4", "c7c6", "d2d4", "d7d5", "e4e5", "c8f5", "g1f3", "e7e6", "f1e2"],
+          "introduction": "White closes the center for space while Black develops the bishop outside the pawn chain.",
+          "ideas": ["e5 claims space but gives Black a fixed target.", "Bf5 is the Caro-Kann's signature development advantage over the French.", "White develops calmly before launching kingside play."],
+          "summary": "White has space; Black has a sound structure and an active light-squared bishop."
+        }
+      ]
+    }
+  ]
+}

@@ -1,24 +1,30 @@
 (function () {
   'use strict';
 
-  const { ChessGame, squareName } = window.ChessDomain;
+  const { ChessGame, squareName, moveToUci } = window.ChessDomain;
   const { BoardRenderer } = window.TournamentRenderer;
   const { GameStorage } = window.TournamentStorage;
   const { StockfishClient } = window.TournamentEngine;
   const { CustomChessEngine } = window.TournamentCustomEngine;
   const { TournamentClock } = window.TournamentTiming;
   const { RoomClient, createRoomCode, normalizeRoom } = window.TournamentMultiplayer;
+  const { CoachController } = window.TournamentCoach;
+  const { OpeningPrepController } = window.TournamentOpeningPrep;
   const $ = id => document.getElementById(id);
 
   const ui = {
     board: $('chessboard'), title: $('game-title'), turn: $('turn-indicator'), hint: $('board-hint'), sessionStatus: $('session-status'),
-    newGame: $('new-game'), undo: $('undo-move'), flip: $('flip-board'), engineSelect: $('engine-select'), engineSectionTitle: $('engine-section-title'), engineSelectLabel: $('engine-select-label'), depth: $('engine-depth'), depthValue: $('depth-value'), opponentDescription: $('opponent-description'), selectedEngineName: $('selected-engine-name'), selectedEngineStats: $('selected-engine-stats'),
+    leftRail: document.querySelector('.left-rail'), rightRail: document.querySelector('.right-rail'), mobileControls: $('mobile-controls-toggle'), mobileInsights: $('mobile-insights-toggle'),
+    newGame: $('new-game'), undo: $('undo-move'), flip: $('flip-board'), engineSelect: $('engine-select'), engineSectionTitle: $('engine-section-title'), engineSelectLabel: $('engine-select-label'), depth: $('engine-depth'), depthValue: $('depth-value'), opponentDescription: $('opponent-description'), selectedEngineName: $('selected-engine-name'), selectedEngineStats: $('selected-engine-stats'), engineModeSection: $('engine-mode-section'),
     camera: $('camera-tilt'), resetCamera: $('reset-camera'), save: $('save-game'), moveList: $('move-list'), copyPgn: $('copy-pgn'), copyFen: $('copy-fen'), fen: $('fen-value'),
     connect: $('connect-engine'), engineDot: $('engine-dot'), engineLabel: $('engine-label'), engineMessage: $('engine-message'), evalScore: $('eval-score'), evalMeter: $('eval-meter-fill'), pv: $('pv-line'), analysisCard: $('analysis-card'), analysisCardTitle: $('analysis-card-title'), depthControl: $('engine-depth-control'),
     promotion: $('promotion-dialog'), promotionOptions: $('promotion-options'), toast: $('toast'),
-    menu: $('mode-menu'), openMenu: $('open-mode-menu'), launchAnalysis: $('launch-analysis'), launchTournamentSetup: $('launch-tournament-setup'), modeChoiceGrid: $('mode-choice-grid'), tournamentSetup: $('tournament-setup'), backToModeChoice: $('back-to-mode-choice'), tournamentOpponent: $('tournament-opponent'), tournamentColor: $('tournament-color'), tournamentColorLabel: $('tournament-color-label'), tournamentTimeControl: $('tournament-time-control'), peerRoleField: $('peer-role-field'), peerRole: $('peer-role'), openTournamentRules: $('open-tournament-rules'), rules: $('tournament-rules'), rulesEyebrow: $('rules-eyebrow'), rulesTitle: $('rules-title'), rulesClockCopy: $('rules-clock-copy'), rulesStart: $('rules-start'), rulesCancel: $('rules-cancel'),
+    menu: $('mode-menu'), openMenu: $('open-mode-menu'), launchAnalysis: $('launch-analysis'), launchCoach: $('launch-coach'), launchOpeningPrep: $('launch-opening-prep'), launchTournamentSetup: $('launch-tournament-setup'), modeChoiceGrid: $('mode-choice-grid'), tournamentSetup: $('tournament-setup'), backToModeChoice: $('back-to-mode-choice'), tournamentOpponent: $('tournament-opponent'), tournamentColor: $('tournament-color'), tournamentColorLabel: $('tournament-color-label'), tournamentTimeControl: $('tournament-time-control'), peerRoleField: $('peer-role-field'), peerRole: $('peer-role'), openTournamentRules: $('open-tournament-rules'), rules: $('tournament-rules'), rulesEyebrow: $('rules-eyebrow'), rulesTitle: $('rules-title'), rulesClockCopy: $('rules-clock-copy'), rulesStart: $('rules-start'), rulesCancel: $('rules-cancel'),
     peerDialog: $('peer-dialog'), peerDialogTitle: $('peer-dialog-title'), peerStatus: $('peer-status'), peerHostFlow: $('peer-host-flow'), peerGuestFlow: $('peer-guest-flow'), peerRoomOutput: $('peer-room-output'), copyPeerRoom: $('copy-peer-room'), peerRoomInput: $('peer-room-input'), joinPeerRoom: $('join-peer-room'), peerError: $('peer-error'), cancelPeerPairing: $('cancel-peer-pairing'),
-    tournamentClocks: $('tournament-clocks'), whiteClock: $('white-clock'), blackClock: $('black-clock'), whiteClockTime: $('white-clock-time'), blackClockTime: $('black-clock-time'), timeControlLabel: $('time-control-label')
+    tournamentClocks: $('tournament-clocks'), whiteClock: $('white-clock'), blackClock: $('black-clock'), whiteClockTime: $('white-clock-time'), blackClockTime: $('black-clock-time'), timeControlLabel: $('time-control-label'),
+    coachCard: $('coach-card'), coachDot: $('coach-dot'), coachMoveTab: $('coach-move-tab'), coachPositionTab: $('coach-position-tab'), coachStatus: $('coach-status'), coachBody: $('coach-body'), coachConnect: $('coach-connect'),
+    variationControls: $('variation-controls'), variationPrevious: $('variation-previous'), variationNext: $('variation-next'), variationExit: $('variation-exit'), variationLabel: $('variation-label'),
+    openingControls: $('opening-controls'), openingCard: $('opening-card'), openingSelect: $('opening-select'), openingChapter: $('opening-chapter'), openingSide: $('opening-side'), openingWorkflow: $('opening-workflow'), openingRestart: $('opening-restart'), openingCardTitle: $('opening-card-title'), openingChapterTitle: $('opening-chapter-title'), openingProgress: $('opening-progress'), openingDescription: $('opening-description'), openingIdeas: $('opening-ideas'), openingLine: $('opening-line'), openingFeedback: $('opening-feedback'), openingPrevious: $('opening-previous'), openingNext: $('opening-next')
   };
 
   class TournamentRoom {
@@ -44,6 +50,7 @@
       this.pendingPromotion = null;
       this.engineThinking = false;
       this.engineRequestToken = 0;
+      this.preview = null;
       this.depthSettings = { stockfish: 14, custom: 4 };
       this.lastEngineStats = '';
       this.cameraState = { pitch: 54, yaw: 0, panX: 0, panY: 0, zoom: 1, pressed: new Set(), frame: null };
@@ -52,6 +59,17 @@
         isActive: () => this.isTournament(),
         beginDrag: square => this.beginTournamentDrag(square),
         drop: destination => this.dropTournamentDrag(destination)
+      });
+      this.coach = new CoachController({
+        engine: this.engine,
+        getDepth: () => Number(ui.depth.value),
+        ui: { card: ui.coachCard, dot: ui.coachDot, moveTab: ui.coachMoveTab, positionTab: ui.coachPositionTab, status: ui.coachStatus, body: ui.coachBody },
+        onPreview: (variation, label) => this.startVariationPreview(variation, label),
+      });
+      this.openingPrep = new OpeningPrepController({
+        ui: { opening: ui.openingSelect, chapter: ui.openingChapter, side: ui.openingSide, workflow: ui.openingWorkflow, restart: ui.openingRestart, title: ui.openingCardTitle, chapterTitle: ui.openingChapterTitle, progress: ui.openingProgress, description: ui.openingDescription, ideas: ui.openingIdeas, line: ui.openingLine, feedback: ui.openingFeedback, previous: ui.openingPrevious, next: ui.openingNext },
+        onChange: () => this.render(),
+        onHint: message => { ui.hint.textContent = message; },
       });
       this.bindEvents();
       this.bindEngine();
@@ -80,8 +98,11 @@
       ui.copyPgn.addEventListener('click', () => this.copy(this.game.pgn(), 'PGN copied.'));
       ui.copyFen.addEventListener('click', () => this.copy(this.game.fen(), 'FEN copied.'));
       ui.connect.addEventListener('click', () => this.connectEngine());
+      ui.coachConnect.addEventListener('click', () => this.connectEngine());
       ui.openMenu.addEventListener('click', event => { event.preventDefault(); this.openModeMenu(); });
       ui.launchAnalysis.addEventListener('click', () => this.startAnalysis());
+      ui.launchCoach.addEventListener('click', () => this.startCoach());
+      ui.launchOpeningPrep.addEventListener('click', () => this.startOpeningPrep());
       ui.launchTournamentSetup.addEventListener('click', () => this.showTournamentSetup());
       ui.backToModeChoice.addEventListener('click', () => this.hideTournamentSetup());
       ui.tournamentOpponent.addEventListener('change', () => this.updateTournamentSetup());
@@ -98,6 +119,11 @@
       ui.cancelPeerPairing.addEventListener('click', () => this.cancelRoomPairing());
       ui.whiteClock.addEventListener('click', () => this.pressPlayerClock('w'));
       ui.blackClock.addEventListener('click', () => this.pressPlayerClock('b'));
+      ui.variationPrevious.addEventListener('click', () => this.stepVariation(-1));
+      ui.variationNext.addEventListener('click', () => this.stepVariation(1));
+      ui.variationExit.addEventListener('click', () => this.exitVariationPreview());
+      ui.mobileControls.addEventListener('click', () => { ui.leftRail.classList.toggle('mobile-open'); ui.rightRail.classList.remove('mobile-open'); });
+      ui.mobileInsights.addEventListener('click', () => { ui.rightRail.classList.toggle('mobile-open'); ui.leftRail.classList.remove('mobile-open'); });
       window.addEventListener('keydown', event => this.handleCameraKey(event, true));
       window.addEventListener('keyup', event => this.handleCameraKey(event, false));
       window.addEventListener('blur', () => { this.cameraState.pressed.clear(); });
@@ -108,12 +134,22 @@
         if (this.engineKind() !== 'stockfish') return;
         ui.engineDot.className = `engine-dot ${status === 'online' ? 'online' : status === 'connecting' ? 'connecting' : 'offline'}`;
         ui.engineDot.title = status === 'online' ? 'Stockfish connected' : status === 'connecting' ? 'Connecting to Stockfish' : 'Stockfish offline';
-        if (status === 'connecting') { ui.engineMessage.textContent = 'Looking for the local Stockfish bridge…'; ui.connect.disabled = true; ui.connect.textContent = 'Connecting…'; }
-        if (status === 'online') { ui.connect.disabled = false; ui.connect.textContent = 'Engine connected'; if (!this.isTournament()) ui.engineMessage.textContent = detail || 'Connected locally. Evaluation updates after each move.'; }
-        if (status === 'offline') { ui.connect.disabled = false; ui.connect.textContent = 'Connect engine'; this.engineThinking = false; if (!this.isTournament()) ui.engineMessage.textContent = detail || 'Engine offline. Start the local bridge to analyse this board.'; }
+        if (status === 'connecting') { ui.engineMessage.textContent = 'Looking for the local Stockfish bridge…'; ui.connect.disabled = true; ui.connect.textContent = 'Connecting…'; ui.coachConnect.disabled = true; ui.coachConnect.textContent = 'Connecting…'; }
+        if (status === 'online') {
+          ui.connect.disabled = false; ui.connect.textContent = 'Engine connected';
+          ui.coachConnect.disabled = true; ui.coachConnect.textContent = 'Stockfish connected';
+          if (!this.isTournament()) ui.engineMessage.textContent = detail || 'Connected locally. Evaluation updates after each move.';
+          if (this.isCoach()) this.coach.start(this.game);
+        }
+        if (status === 'offline') {
+          ui.connect.disabled = false; ui.connect.textContent = 'Connect engine'; this.engineThinking = false;
+          ui.coachConnect.disabled = false; ui.coachConnect.textContent = 'Connect Stockfish';
+          if (!this.isTournament()) ui.engineMessage.textContent = detail || 'Engine offline. Start the local bridge to analyse this board.';
+          if (this.isCoach()) this.coach.start(this.game);
+        }
       });
       this.engine.onAnalysis = message => {
-        if (this.isTournament() || this.engineKind() !== 'stockfish' || message.fen !== this.game.fen()) return;
+        if (this.appMode !== 'analysis' || this.engineKind() !== 'stockfish' || message.fen !== this.game.fen()) return;
         const whiteScore = this.game.turn === 'w' ? Number(message.score) : -Number(message.score);
         const display = message.scoreType === 'mate' ? `M${whiteScore > 0 ? '+' : ''}${whiteScore}` : `${whiteScore >= 0 ? '+' : ''}${(whiteScore / 100).toFixed(2)}`;
         this.lastEngineStats = `${Number(message.nodes || 0).toLocaleString()} nodes · depth ${message.depth || ui.depth.value}`;
@@ -135,7 +171,15 @@
       const session = this.storage.loadSession();
       if (!session) return;
       try {
-        this.game = new ChessGame(session.fen);
+        if (session.schemaVersion === 2 && session.startFen && Array.isArray(session.moves)) {
+          const restored = new ChessGame(session.startFen);
+          session.moves.forEach(entry => {
+            const move = restored.moveFromUci(entry.uci);
+            if (!move) throw new Error('Saved move is not legal.');
+            restored.apply(move);
+          });
+          this.game = restored.fen() === session.fen ? restored : new ChessGame(session.fen);
+        } else this.game = new ChessGame(session.fen);
         if (['stockfish', 'custom'].includes(session.settings?.engine)) ui.engineSelect.value = session.settings.engine;
         if (session.settings?.depth) {
           const key = ui.engineSelect.value === 'custom' ? 'custom' : 'stockfish';
@@ -145,6 +189,8 @@
     }
 
     isTournament() { return this.appMode === 'tournament' && Boolean(this.tournament); }
+    isCoach() { return this.appMode === 'coach'; }
+    isOpeningPrep() { return this.appMode === 'opening-prep'; }
     isGameOver() { return Boolean(this.game.result || this.timeoutResult); }
     resultText() { return this.timeoutResult || this.game.result; }
     engineKind() { return this.isTournament() ? this.tournament.opponent : ui.engineSelect.value; }
@@ -170,6 +216,9 @@
       ui.modeChoiceGrid.hidden = false;
     }
     openModeMenu() {
+      this.exitVariationPreview(false);
+      this.coach.stop();
+      this.openingPrep.stop();
       if (this.isTournament()) {
         if (this.isPeerTournament()) {
           this.leaveTournament();
@@ -184,8 +233,12 @@
       ui.menu.hidden = false;
     }
     startAnalysis() {
+      const previousMode = this.appMode;
       this.leaveTournament();
+      this.coach.stop();
+      this.openingPrep.stop();
       this.appMode = 'analysis';
+      if (previousMode === 'opening-prep') this.game = new ChessGame();
       ui.menu.hidden = true;
       if (ui.engineSelect.value === 'peer') ui.engineSelect.value = 'stockfish';
       ui.engineSelect.disabled = false;
@@ -196,6 +249,39 @@
       this.render();
       ui.hint.textContent = 'Select a piece to see its legal moves.';
       this.analyse();
+    }
+    startCoach() {
+      const previousMode = this.appMode;
+      this.leaveTournament();
+      this.openingPrep.stop();
+      this.appMode = 'coach';
+      if (previousMode === 'opening-prep' || previousMode === 'tournament') this.game = new ChessGame();
+      ui.menu.hidden = true;
+      ui.engineSelect.value = 'stockfish';
+      ui.engineSelect.disabled = true;
+      this.timeoutResult = null;
+      this.touchMove = null;
+      this.clearSelection(false);
+      this.setEngineControls();
+      this.render();
+      ui.hint.textContent = 'Play a move. The coach will explain its consequences and strongest continuation.';
+      this.coach.start(this.game);
+      if (this.engine.status !== 'online') this.connectEngine(true);
+    }
+    startOpeningPrep() {
+      this.leaveTournament();
+      this.coach.stop();
+      this.appMode = 'opening-prep';
+      this.game = new ChessGame();
+      ui.menu.hidden = true;
+      ui.engineSelect.disabled = false;
+      this.timeoutResult = null;
+      this.touchMove = null;
+      this.clearSelection(false);
+      this.setEngineControls();
+      this.render();
+      ui.hint.textContent = 'Choose a lesson, then step through it or practice the line from memory.';
+      this.openingPrep.start(this.game);
     }
     openTournamentRules() {
       this.pendingTournamentConfig = {
@@ -441,11 +527,19 @@
       ui.selectedEngineName.textContent = this.engineName();
       const base = custom
         ? `Classical evaluation · aggressive · about 1900 · depth ${depth}`
-        : `Local UCI bridge · tournament engine · depth ${depth}`;
+        : `Local UCI bridge · ${this.isCoach() ? 'grounded coach analysis' : 'tournament engine'} · depth ${depth}`;
       ui.selectedEngineStats.textContent = this.lastEngineStats ? `${base} · ${this.lastEngineStats}` : base;
     }
     setEngineControls() {
-      ui.analysisCard.hidden = this.isTournament();
+      ui.analysisCard.hidden = this.isTournament() || this.isCoach() || this.isOpeningPrep();
+      ui.coachCard.hidden = !this.isCoach();
+      ui.openingCard.hidden = !this.isOpeningPrep();
+      ui.engineModeSection.hidden = this.isOpeningPrep();
+      ui.openingControls.hidden = !this.isOpeningPrep();
+      ui.coachDot.className = `engine-dot ${this.engine.status === 'online' ? 'online' : this.engine.status === 'connecting' ? 'connecting' : 'offline'}`;
+      ui.coachConnect.disabled = this.engine.status !== 'offline';
+      ui.coachConnect.textContent = this.engine.status === 'online' ? 'Stockfish connected' : this.engine.status === 'connecting' ? 'Connecting…' : 'Connect Stockfish';
+      if (this.isOpeningPrep()) return;
       const peer = this.engineKind() === 'peer';
       ui.depthControl.hidden = peer;
       ui.analysisCardTitle.textContent = peer ? 'Device connection' : 'Position analysis';
@@ -474,11 +568,12 @@
       ui.depth.max = String(maxDepth);
       ui.depth.value = String(depth);
       ui.depthValue.textContent = String(depth);
-      ui.engineSectionTitle.textContent = this.isTournament() ? 'Tournament opponent' : 'Analysis';
-      ui.engineSelectLabel.textContent = this.isTournament() ? 'Opponent engine' : 'Analysis engine';
+      ui.engineSectionTitle.textContent = this.isTournament() ? 'Tournament opponent' : this.isCoach() ? 'Coach engine' : 'Analysis';
+      ui.engineSelectLabel.textContent = this.isTournament() ? 'Opponent engine' : this.isCoach() ? 'Grounding engine' : 'Analysis engine';
       ui.opponentDescription.textContent = this.isTournament()
         ? `${this.engineName()} plays ${this.opponentColor() === 'w' ? 'White' : 'Black'} in this timed match.`
-        : custom ? 'Use CustomChessEngine for local classical analysis.' : 'Use Stockfish for local position analysis.';
+        : this.isCoach() ? 'Stockfish grounds every verdict and projected line locally.'
+          : custom ? 'Use CustomChessEngine for local classical analysis.' : 'Use Stockfish for local position analysis.';
       this.refreshEngineProfile();
       ui.engineLabel.textContent = this.engineName();
       if (custom) {
@@ -509,6 +604,7 @@
       this.lastEngineStats = '';
       this.refreshEngineProfile();
       this.analyse();
+      if (this.isCoach()) this.coach.start(this.game);
     }
 
     handleCameraKey(event, isDown) {
@@ -538,6 +634,37 @@
     }
     applyCamera() { ui.camera.value = String(this.cameraState.pitch); this.renderer.setCamera(this.cameraState); }
     resetCamera() { Object.assign(this.cameraState, { pitch: 54, yaw: 0, panX: 0, panY: 0, zoom: 1 }); this.applyCamera(); }
+
+    startVariationPreview(variation, label) {
+      if (!variation?.frames?.length) return;
+      this.clearSelection(false);
+      this.preview = { variation, label, index: 0 };
+      ui.variationControls.hidden = false;
+      this.showVariationFrame();
+    }
+    stepVariation(delta) {
+      if (!this.preview) return;
+      this.preview.index = Math.max(0, Math.min(this.preview.variation.frames.length - 1, this.preview.index + delta));
+      this.showVariationFrame();
+    }
+    showVariationFrame() {
+      if (!this.preview) return;
+      const frame = this.preview.variation.frames[this.preview.index];
+      this.renderer.setGame(new ChessGame(frame.fen));
+      ui.variationPrevious.disabled = this.preview.index === 0;
+      ui.variationNext.disabled = this.preview.index >= this.preview.variation.frames.length - 1;
+      ui.variationLabel.textContent = `${this.preview.label} · ${this.preview.index}/${this.preview.variation.frames.length - 1}${frame.san ? ` · ${frame.san}` : ''}`;
+      ui.hint.textContent = this.preview.index ? `Projected position after ${frame.san}.` : 'Starting position for this projected line.';
+    }
+    exitVariationPreview(render = true) {
+      if (!this.preview) return;
+      this.preview = null;
+      ui.variationControls.hidden = true;
+      if (render) {
+        this.renderer.setGame(this.game);
+        ui.hint.textContent = this.isCoach() ? 'Returned to the live position.' : 'Returned to the game.';
+      }
+    }
 
     isPlayerTurnReady() {
       return this.isTournament() && !this.isGameOver() && !this.engineThinking && !this.tournament.awaitingClockPress && !this.tournament.waitingForEngine && !this.tournament.waitingForRemoteClock && !this.tournament.connectionLost && (!this.isPeerTournament() || this.roomClient.status === 'connected') && this.game.turn === this.playerColor() && this.clock?.activeColor === this.playerColor();
@@ -575,7 +702,11 @@
       ui.hint.textContent = `Touch-move: ${squareName(this.touchMove.from.r, this.touchMove.from.c)} must move to a legal target.`;
     }
     handleSquare(square) {
-      if (this.isTournament() || this.engineThinking || this.pendingPromotion || this.isGameOver()) return;
+      if (this.preview || this.isTournament() || this.engineThinking || this.pendingPromotion || this.isGameOver()) return;
+      if (this.isOpeningPrep() && !this.openingPrep.canInteract()) {
+        this.showToast(this.openingPrep.isLearn() ? 'Use Next move to step through this lesson.' : 'Wait for the prepared reply.');
+        return;
+      }
       const target = this.selectionMoves.find(move => move.to.r === square.r && move.to.c === square.c);
       if (this.selected && target) {
         if (target.promotion) this.openPromotion(target); else this.commitMove(target);
@@ -606,12 +737,16 @@
 
     commitMove(move, source = 'local') {
       const beforeFen = this.game.fen();
+      const uci = moveToUci(move);
+      if (this.isOpeningPrep() && source === 'local' && !this.openingPrep.acceptsMove(move)) return;
       const { san } = this.game.apply(move);
+      const entry = this.game.history.at(-1);
       this.clearSelection(false);
       if (this.isPeerTournament() && source === 'local') {
-        const uci = `${squareName(move.from.r, move.from.c)}${squareName(move.to.r, move.to.c)}${move.promotionChoice || ''}`;
         this.roomClient.send('move', { uci, beforeFen });
       }
+      if (this.isCoach()) this.coach.onMove(this.game, entry, this.game.history.length - 1);
+      if (this.isOpeningPrep()) this.openingPrep.afterMove(entry, source);
       if (this.game.result) {
         this.clock?.stop();
         this.render();
@@ -626,7 +761,7 @@
           this.tournament.waitingForRemoteClock = true;
           ui.hint.textContent = `${this.opponentName()} played ${san}. Waiting for their clock press…`;
         } else this.awaitPlayerClockPress(san);
-      } else {
+      } else if (!this.isOpeningPrep()) {
         ui.hint.textContent = `${san} recorded. ${this.game.turn === 'w' ? 'White' : 'Black'} to move.`;
       }
       this.analyse();
@@ -703,6 +838,12 @@
     }
 
     newGame() {
+      this.exitVariationPreview(false);
+      if (this.isOpeningPrep()) {
+        this.openingPrep.reset();
+        this.showToast('Opening lesson restarted.');
+        return;
+      }
       if (this.isTournament()) {
         if (this.isPeerTournament()) {
           this.resetTournamentBoard(true);
@@ -716,9 +857,11 @@
       }
       this.cancelEngineSearch();
       this.game.reset(); this.timeoutResult = null; this.clearSelection(false);
+      if (this.isCoach()) this.coach.clear();
       this.render();
-      ui.hint.textContent = 'New analysis board ready. White to move.';
+      ui.hint.textContent = this.isCoach() ? 'New coaching game ready. Play a move for feedback.' : 'New analysis board ready. White to move.';
       this.analyse();
+      if (this.isCoach()) this.coach.start(this.game);
     }
     resetTournamentBoard(broadcast) {
       if (!this.isPeerTournament()) return;
@@ -736,8 +879,15 @@
     }
     undo() {
       if (this.isTournament()) { this.showToast('Take-backs are disabled in tournament simulation.'); return; }
+      this.exitVariationPreview(false);
+      if (this.isOpeningPrep()) {
+        if (this.openingPrep.isLearn()) this.openingPrep.stepLearn(-1); else this.openingPrep.reset();
+        this.showToast(this.openingPrep.isLearn() ? 'Moved back one lesson step.' : 'Practice line restarted.');
+        return;
+      }
       if (!this.game.undo()) { this.showToast('There is no move to take back.'); return; }
       this.clearSelection(false); this.render(); this.analyse(); this.showToast('Move taken back.');
+      if (this.isCoach()) this.coach.onUndo(this.game);
     }
     clearSelection(render = true) {
       this.selected = null;
@@ -749,7 +899,7 @@
       if (render) this.renderer.render();
     }
     analyse() {
-      if (this.isTournament()) return;
+      if (this.isTournament() || this.isCoach() || this.isOpeningPrep()) return;
       if (this.engineKind() === 'stockfish' && this.engine.status === 'online') this.engine.analyse(this.game.fen(), Number(ui.depth.value));
     }
     connectEngine(silent = false) {
@@ -785,7 +935,7 @@
       });
     }
     render() {
-      this.renderer.setGame(this.game);
+      if (this.preview) this.showVariationFrame(); else this.renderer.setGame(this.game);
       this.renderHeader();
       this.renderMoves();
       this.renderClocks();
@@ -793,14 +943,14 @@
     }
     renderHeader() {
       const result = this.resultText();
-      const title = this.isTournament() ? `Tournament · vs ${this.engineName()}` : 'Analysis board';
+      const title = this.isTournament() ? `Tournament · vs ${this.engineName()}` : this.isCoach() ? 'AI coach' : this.isOpeningPrep() ? 'Opening Prep' : 'Analysis board';
       ui.title.textContent = result || title;
       const turnColor = this.game.turn === 'w' ? 'white-piece' : 'black-piece';
       const turnIcon = this.game.turn === 'w' ? '♔' : '♚';
       ui.turn.innerHTML = `<span class="turn-piece ${turnColor}">${turnIcon}</span><span>${result || `${this.game.turn === 'w' ? 'White' : 'Black'} to move`}</span>`;
       ui.sessionStatus.innerHTML = this.isTournament()
         ? `<span class="pulse"></span> ${this.isPeerTournament() ? `Network room ${this.roomClient.room}` : 'Tournament simulation'} · ${this.tournament.label}`
-        : '<span class="pulse"></span> Practice table · Local session';
+        : `<span class="pulse"></span> ${this.isCoach() ? 'AI coach' : this.isOpeningPrep() ? 'Opening Prep' : 'Practice table'} · Local session`;
     }
     renderMoves() {
       if (!this.game.history.length) { ui.moveList.innerHTML = '<p class="empty-moves">Your moves will be recorded here.</p>'; return; }
@@ -810,6 +960,8 @@
         const number = document.createElement('span'); number.className = 'move-number'; number.textContent = `${Math.floor(i / 2) + 1}.`;
         const white = document.createElement('span'); white.className = `move-san ${i === this.game.history.length - 1 ? 'latest' : ''}`; white.textContent = this.game.history[i]?.san || '';
         const black = document.createElement('span'); black.className = `move-san ${i + 1 === this.game.history.length - 1 ? 'latest' : ''}`; black.textContent = this.game.history[i + 1]?.san || '';
+        if (this.isCoach() && this.game.history[i]) { white.classList.add('reviewable'); white.tabIndex = 0; white.addEventListener('click', () => this.coach.selectMove(i)); white.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') this.coach.selectMove(i); }); }
+        if (this.isCoach() && this.game.history[i + 1]) { black.classList.add('reviewable'); black.tabIndex = 0; black.addEventListener('click', () => this.coach.selectMove(i + 1)); black.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') this.coach.selectMove(i + 1); }); }
         row.append(number, white, black); ui.moveList.append(row);
       }
       ui.moveList.scrollTop = ui.moveList.scrollHeight;

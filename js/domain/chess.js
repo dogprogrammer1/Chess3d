@@ -18,6 +18,7 @@
   function inBounds(r, c) { return r >= 0 && r < 8 && c >= 0 && c < 8; }
   function squareName(r, c) { return `${FILES[c]}${8 - r}`; }
   function squareCoords(name) { return { r: 8 - Number(name[1]), c: FILES.indexOf(name[0]) }; }
+  function moveToUci(move) { return `${squareName(move.from.r, move.from.c)}${squareName(move.to.r, move.to.c)}${move.promotionChoice || ''}`; }
   function cloneBoard(board) { return board.map(row => row.map(piece => piece ? { ...piece } : null)); }
   function cloneMove(move) { return { ...move, from: { ...move.from }, to: { ...move.to } }; }
 
@@ -167,6 +168,7 @@
     apply(move, options = {}) {
       const record = options.record !== false;
       const before = record ? this.snapshot() : null;
+      const beforeFen = record ? this.fen() : '';
       const piece = this.board[move.from.r][move.from.c];
       if (!piece) throw new Error('No piece on the source square.');
       const captured = move.enPassant ? this.board[move.from.r][move.to.c] : this.board[move.to.r][move.to.c];
@@ -188,7 +190,7 @@
       // not need notation, and skipping it avoids recursively generating moves.
       const san = record ? this.moveToSan(this.lastMove, before) : '';
       if (record) {
-        this.history.push({ before, move: this.lastMove, san, fen: this.fen() });
+        this.history.push({ before, beforeFen, move: this.lastMove, uci: moveToUci(this.lastMove), san, fen: this.fen() });
         const key = this.positionKey(); this.positionCounts.set(key, (this.positionCounts.get(key) || 0) + 1);
         this.updateResult();
       }
@@ -269,5 +271,5 @@
     }
   }
 
-  window.ChessDomain = { ChessGame, START_FEN, FILES, squareName, squareCoords, opposite };
+  window.ChessDomain = { ChessGame, START_FEN, FILES, squareName, squareCoords, moveToUci, opposite };
 })();

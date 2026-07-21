@@ -8,7 +8,9 @@ Tournament Room is the first foundation for a polished 3D chess tournament-train
 - Legal chess: normal moves, checks, checkmate, stalemate, castling, en passant, promotion, fifty-move rule, threefold repetition, and insufficient-material draws.
 - FEN and PGN output, move record, takebacks, local-session recovery, and downloadable PGN saves.
 - An optional local Stockfish connector. The browser never launches executables or sends positions over the network; a loopback-only bridge talks UCI to the bundled Stockfish executable in `lib\stockfish`.
-- A launch menu that separates free-form analysis from a tournament game simulation.
+- A launch menu for free-form analysis, coached play, opening preparation, and tournament simulation.
+- A grounded AI Coach mode that grades moves with Stockfish, explains material, activity, pawn structure, and king safety, and previews principal variations without changing the live game.
+- An Opening Prep mode with six opening families, learn/practice workflows, repertoire branches, key ideas, and browser-local progress.
 - Tournament games with selectable Stockfish or CustomChessEngine opponents, player color, time controls, touch-move enforcement, a cursor-following selected piece, player clock presses, and automatic engine clock presses.
 - Local-network tournament rooms for playing on two devices. A six-character room code pairs the browsers through a lightweight WebSocket relay running on the host computer; moves and clocks are validated in both browsers and never sent to a cloud service.
 - A browser-local CustomChessEngine compatibility adapter: aggressive tactical play, approximately 1900 strength at its recommended depth 4 setting.
@@ -50,6 +52,14 @@ powershell -ExecutionPolicy Bypass -File .\tools\start-local-server.ps1 -OpenBro
 
 The launcher is already pointed at `lib\stockfish\stockfish-windows-x86-64-avx2.exe`. The bridge listens only on `127.0.0.1`; it never exposes Stockfish or sends positions over the network.
 
+## AI Coach and Opening Prep
+
+Choose **AI coach** from the session menu and play moves normally. The coach uses local Stockfish MultiPV and win/draw/loss output for its verdict, while a deterministic feature analyzer grounds the written explanation in the board's material, activity, pawn structure, and king safety. Use **Preview played line** or **Preview best line** to step through a projected continuation; the scoresheet and live position remain unchanged.
+
+Choose **Opening Prep** to study the Italian Game, Ruy Lopez, Queen's Gambit, Sicilian Defense, French Defense, or Caro-Kann. **Learn the line** enables step-by-step playback. **Practice from memory** hides the prepared line, validates repertoire moves, supplies the opponent reply, and records completion and accuracy in browser-local storage.
+
+Coach verdicts require the local Stockfish bridge. Opening lessons and static position features remain available when the bridge is offline. Live coaching stays disabled in tournament games.
+
 ## Architecture
 
 | Area | Current boundary | Planned extension |
@@ -57,6 +67,8 @@ The launcher is already pointed at `lib\stockfish\stockfish-windows-x86-64-avx2.
 | Rules | `js/domain/chess.js` | Shared desktop/server validation package |
 | 3D view | `js/rendering/solid-board.js` and `js/rendering/renderer.js` | Camera presets and tournament-room polish |
 | Engine | `js/engines/stockfish-client.js` and the local UCI bridge | Desktop sidecar with multi-PV and configurable strength |
+| Coach | `js/coach/` combines Stockfish results with deterministic position features | Optional grounded conversational narrator |
+| Opening prep | `js/openings/` and `data/openings/` | Larger user-selectable repertoires and synced progress |
 | Custom engine | `js/engines/custom-engine-client.js` and its worker | Worker-backed tactical search and selectable personality profiles |
 | Tournament session | `js/app.js` and `js/tournament/tournament-clock.js` keep match rules, clock state, and opponent turns separate from analysis | Saved tournament metadata and adjudication history |
 | Device rooms | `js/multiplayer/room-client.js` and `tools/start-room-relay.ps1` | Reconnect support and optional authenticated remote rooms |

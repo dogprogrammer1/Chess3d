@@ -31,7 +31,8 @@ try {
     if ([string]::IsNullOrWhiteSpace($relativePath)) { $relativePath = 'index.html' }
     $webPath = $relativePath.Replace([IO.Path]::DirectorySeparatorChar, '/')
     $allowedAsset = $webPath -in @('index.html', 'styles.css') -or
-      (($webPath.StartsWith('js/') -or $webPath.StartsWith('CustomChessEngine/')) -and $webPath.EndsWith('.js'))
+      (($webPath.StartsWith('js/') -or $webPath.StartsWith('CustomChessEngine/')) -and $webPath.EndsWith('.js')) -or
+      ($webPath.StartsWith('data/openings/') -and $webPath.EndsWith('.json'))
     $serveRoot = $rootPath
     $serveRelative = $relativePath
     $filePath = [IO.Path]::GetFullPath((Join-Path $serveRoot $serveRelative))

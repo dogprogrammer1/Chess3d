@@ -9,11 +9,12 @@
   class GameStorage {
     saveSession(game, settings) {
       const record = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         savedAt: new Date().toISOString(),
+        startFen: game.history[0]?.beforeFen || game.fen(),
         fen: game.fen(),
         pgn: game.pgn(),
-        moves: game.history.map(entry => ({ san: entry.san, fen: entry.fen })),
+        moves: game.history.map(entry => ({ uci: entry.uci, san: entry.san, fen: entry.fen })),
         settings: { ...settings },
       };
       localStorage.setItem(KEY, JSON.stringify(record));
@@ -25,7 +26,7 @@
         const raw = localStorage.getItem(KEY);
         if (!raw) return null;
         const record = JSON.parse(raw);
-        return record?.schemaVersion === 1 && record.fen ? record : null;
+        return [1, 2].includes(record?.schemaVersion) && record.fen ? record : null;
       } catch {
         return null;
       }
