@@ -9,6 +9,7 @@
   const { TournamentClock } = window.TournamentTiming;
   const { RoomClient, createRoomCode, normalizeRoom } = window.TournamentMultiplayer;
   const { CoachController } = window.TournamentCoach;
+  const { GroundingCoachClient } = window.TournamentGrounding;
   const { OpeningPrepController } = window.TournamentOpeningPrep;
   const $ = id => document.getElementById(id);
 
@@ -22,7 +23,7 @@
     menu: $('mode-menu'), openMenu: $('open-mode-menu'), launchAnalysis: $('launch-analysis'), launchCoach: $('launch-coach'), launchOpeningPrep: $('launch-opening-prep'), launchTournamentSetup: $('launch-tournament-setup'), modeChoiceGrid: $('mode-choice-grid'), tournamentSetup: $('tournament-setup'), backToModeChoice: $('back-to-mode-choice'), tournamentOpponent: $('tournament-opponent'), tournamentColor: $('tournament-color'), tournamentColorLabel: $('tournament-color-label'), tournamentTimeControl: $('tournament-time-control'), peerRoleField: $('peer-role-field'), peerRole: $('peer-role'), openTournamentRules: $('open-tournament-rules'), rules: $('tournament-rules'), rulesEyebrow: $('rules-eyebrow'), rulesTitle: $('rules-title'), rulesClockCopy: $('rules-clock-copy'), rulesStart: $('rules-start'), rulesCancel: $('rules-cancel'),
     peerDialog: $('peer-dialog'), peerDialogTitle: $('peer-dialog-title'), peerStatus: $('peer-status'), peerHostFlow: $('peer-host-flow'), peerGuestFlow: $('peer-guest-flow'), peerRoomOutput: $('peer-room-output'), copyPeerRoom: $('copy-peer-room'), peerRoomInput: $('peer-room-input'), joinPeerRoom: $('join-peer-room'), peerError: $('peer-error'), cancelPeerPairing: $('cancel-peer-pairing'),
     tournamentClocks: $('tournament-clocks'), whiteClock: $('white-clock'), blackClock: $('black-clock'), whiteClockTime: $('white-clock-time'), blackClockTime: $('black-clock-time'), timeControlLabel: $('time-control-label'),
-    coachCard: $('coach-card'), coachDot: $('coach-dot'), coachMoveTab: $('coach-move-tab'), coachPositionTab: $('coach-position-tab'), coachStatus: $('coach-status'), coachBody: $('coach-body'), coachConnect: $('coach-connect'),
+    coachCard: $('coach-card'), coachDot: $('coach-dot'), coachMoveTab: $('coach-move-tab'), coachPositionTab: $('coach-position-tab'), coachModelState: $('coach-model-state'), coachModelDot: $('coach-model-dot'), coachModelStatus: $('coach-model-status'), coachModelRetry: $('coach-model-retry'), coachStatus: $('coach-status'), coachBody: $('coach-body'), coachConnect: $('coach-connect'), coachExportData: $('coach-export-data'),
     variationControls: $('variation-controls'), variationPrevious: $('variation-previous'), variationNext: $('variation-next'), variationExit: $('variation-exit'), variationLabel: $('variation-label'),
     openingControls: $('opening-controls'), openingCard: $('opening-card'), openingSelect: $('opening-select'), openingChapter: $('opening-chapter'), openingSide: $('opening-side'), openingWorkflow: $('opening-workflow'), openingRestart: $('opening-restart'), openingCardTitle: $('opening-card-title'), openingChapterTitle: $('opening-chapter-title'), openingProgress: $('opening-progress'), openingDescription: $('opening-description'), openingIdeas: $('opening-ideas'), openingLine: $('opening-line'), openingFeedback: $('opening-feedback'), openingPrevious: $('opening-previous'), openingNext: $('opening-next')
   };
@@ -33,6 +34,7 @@
       this.storage = new GameStorage();
       this.engine = new StockfishClient();
       this.customEngine = new CustomChessEngine();
+      this.groundingCoach = new GroundingCoachClient();
       this.roomClient = new RoomClient({
         onStatus: (status, detail) => this.handleRoomStatus(status, detail),
         onMessage: (type, payload) => this.handleRoomMessage(type, payload)
@@ -62,8 +64,9 @@
       });
       this.coach = new CoachController({
         engine: this.engine,
+        grounding: this.groundingCoach,
         getDepth: () => Number(ui.depth.value),
-        ui: { card: ui.coachCard, dot: ui.coachDot, moveTab: ui.coachMoveTab, positionTab: ui.coachPositionTab, status: ui.coachStatus, body: ui.coachBody },
+        ui: { card: ui.coachCard, dot: ui.coachDot, moveTab: ui.coachMoveTab, positionTab: ui.coachPositionTab, status: ui.coachStatus, body: ui.coachBody, exportData: ui.coachExportData },
         onPreview: (variation, label) => this.startVariationPreview(variation, label),
       });
       this.openingPrep = new OpeningPrepController({
@@ -72,11 +75,13 @@
         onHint: message => { ui.hint.textContent = message; },
       });
       this.bindEvents();
+      this.bindGrounding();
       this.bindEngine();
       this.restoreLocalSession();
       this.setEngineControls();
       this.applyCamera();
       this.render();
+      this.connectGrounding(true);
       if (this.engineKind() === 'stockfish') this.connectEngine(true);
     }
 
@@ -99,6 +104,7 @@
       ui.copyFen.addEventListener('click', () => this.copy(this.game.fen(), 'FEN copied.'));
       ui.connect.addEventListener('click', () => this.connectEngine());
       ui.coachConnect.addEventListener('click', () => this.connectEngine());
+      ui.coachModelRetry.addEventListener('click', () => this.connectGrounding());
       ui.openMenu.addEventListener('click', event => { event.preventDefault(); this.openModeMenu(); });
       ui.launchAnalysis.addEventListener('click', () => this.startAnalysis());
       ui.launchCoach.addEventListener('click', () => this.startCoach());
@@ -165,6 +171,32 @@
         if (!move) { this.showToast('Stockfish returned an invalid move for this position.'); return; }
         this.commitMove(move, 'engine');
       };
+    }
+
+    bindGrounding() {
+      this.groundingCoach.onStatus((status, model) => {
+        ui.coachModelState.dataset.state = status;
+        ui.coachModelDot.title = status === 'online' ? 'Neural model connected' : status === 'connecting' ? 'Connecting neural model' : 'Neural model offline';
+        if (status === 'connecting') {
+          ui.coachModelStatus.textContent = 'Connecting the neural chess model...';
+          return;
+        }
+        if (status === 'online') {
+          const parameters = Number(model?.parameters || 0);
+          const size = parameters ? `${(parameters / 1_000_000).toFixed(1)}M parameters` : 'trained checkpoint';
+          const precision = String(model?.precision || 'fp32').toUpperCase();
+          ui.coachModelStatus.textContent = `Neural model ready · ${size} · ${precision}`;
+          return;
+        }
+        ui.coachModelStatus.textContent = 'Neural model offline · Stockfish fallback active';
+      });
+    }
+
+    connectGrounding(silent = false) {
+      return this.groundingCoach.connect().catch(error => {
+        if (!silent && this.isCoach()) this.showToast(error.message || 'The neural model is unavailable.');
+        return null;
+      });
     }
 
     restoreLocalSession() {
@@ -265,6 +297,7 @@
       this.setEngineControls();
       this.render();
       ui.hint.textContent = 'Play a move. The coach will explain its consequences and strongest continuation.';
+      this.connectGrounding(true);
       this.coach.start(this.game);
       if (this.engine.status !== 'online') this.connectEngine(true);
     }

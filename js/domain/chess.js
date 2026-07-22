@@ -19,6 +19,14 @@
   function squareName(r, c) { return `${FILES[c]}${8 - r}`; }
   function squareCoords(name) { return { r: 8 - Number(name[1]), c: FILES.indexOf(name[0]) }; }
   function moveToUci(move) { return `${squareName(move.from.r, move.from.c)}${squareName(move.to.r, move.to.c)}${move.promotionChoice || ''}`; }
+  function normalizeSan(san) {
+    return String(san || '')
+      .trim()
+      .replace(/^0-0-0/, 'O-O-O')
+      .replace(/^0-0/, 'O-O')
+      .replace(/\s*e\.?p\.?$/i, '')
+      .replace(/[+#?!]+$/g, '');
+  }
   function cloneBoard(board) { return board.map(row => row.map(piece => piece ? { ...piece } : null)); }
   function cloneMove(move) { return { ...move, from: { ...move.from }, to: { ...move.to } }; }
 
@@ -269,7 +277,33 @@
       const move = this.legalMoves(from.r, from.c).find(m => m.to.r === to.r && m.to.c === to.c);
       return move ? { ...move, promotionChoice: uci[4] || undefined } : null;
     }
+
+    moveFromSan(san) {
+      const token = normalizeSan(san);
+      if (!token) return null;
+      if (token === 'O-O' || token === 'O-O-O') {
+        const castle = token === 'O-O' ? 'short' : 'long';
+        const candidates = this.allLegalMoves().filter(move => move.castle === castle);
+        return candidates.length === 1 ? candidates[0] : null;
+      }
+
+      const match = token.match(/^([KQRBN])?([a-h])?([1-8])?(x)?([a-h][1-8])(?:=?([QRBN]))?$/);
+      if (!match) return null;
+      const [, pieceLetter, sourceFile, sourceRank, captureMarker, destination, promotionLetter] = match;
+      const pieceType = (pieceLetter || 'P').toLowerCase();
+      const target = squareCoords(destination);
+      const candidates = this.allLegalMoves().filter(move => {
+        if (move.piece.type !== pieceType || move.to.r !== target.r || move.to.c !== target.c) return false;
+        if (sourceFile && FILES[move.from.c] !== sourceFile) return false;
+        if (sourceRank && String(8 - move.from.r) !== sourceRank) return false;
+        if (Boolean(move.capture || move.enPassant) !== Boolean(captureMarker)) return false;
+        if (Boolean(move.promotion) !== Boolean(promotionLetter)) return false;
+        return true;
+      });
+      if (candidates.length !== 1) return null;
+      return { ...candidates[0], promotionChoice: promotionLetter?.toLowerCase() };
+    }
   }
 
-  window.ChessDomain = { ChessGame, START_FEN, FILES, squareName, squareCoords, moveToUci, opposite };
+  window.ChessDomain = { ChessGame, START_FEN, FILES, squareName, squareCoords, moveToUci, normalizeSan, opposite };
 })();

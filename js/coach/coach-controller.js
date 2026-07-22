@@ -6,6 +6,27 @@
   const Position = window.TournamentCoachPosition;
   const Variation = window.TournamentCoachVariation;
   const Explanation = window.TournamentCoachExplanation;
+  const { CoachTrainingRecorder } = window.TournamentCoachTraining;
+  const { ChessGame, moveToUci } = window.ChessDomain;
+
+  function legalMovesForFen(fen) {
+    const game = new ChessGame(fen);
+    return game.allLegalMoves().flatMap(move => move.promotion
+      ? ['q', 'r', 'b', 'n'].map(piece => moveToUci({ ...move, promotionChoice: piece }))
+      : [moveToUci(move)]);
+  }
+
+  function probability(value) { return `${Math.round(Number(value || 0) * 100)}%`; }
+  function conceptName(value) { return String(value || 'calculation').replaceAll('_', ' '); }
+  function sanForUci(fen, uci) {
+    if (!fen || !uci) return String(uci || '');
+    try {
+      const game = new ChessGame(fen);
+      const move = game.moveFromUci(uci);
+      if (!move) return uci;
+      return game.apply(move).san || uci;
+    } catch { return uci; }
+  }
 
   function element(tag, className = '', text = '') {
     const node = document.createElement(tag);
@@ -15,12 +36,14 @@
   }
 
   class CoachController {
-    constructor({ engine, getDepth, ui, onPreview }) {
+    constructor({ engine, grounding = null, getDepth, ui, onPreview }) {
       this.engine = engine;
+      this.grounding = grounding;
       this.getDepth = getDepth;
       this.ui = ui;
       this.onPreview = onPreview;
       this.analysis = new AnalysisCoordinator(engine);
+      this.recorder = new CoachTrainingRecorder();
       this.reports = new Map();
       this.position = null;
       this.selectedMoveIndex = null;
@@ -28,6 +51,14 @@
       this.token = 0;
       ui.moveTab.addEventListener('click', () => this.showTab('move'));
       ui.positionTab.addEventListener('click', () => this.showTab('position'));
+      ui.exportData.addEventListener('click', () => this.recorder.download());
+      this.refreshExportControl();
+    }
+
+    refreshExportControl() {
+      const count = this.recorder.count();
+      this.ui.exportData.disabled = count === 0;
+      this.ui.exportData.textContent = count ? `Export model data · ${count}` : 'Export model data';
     }
 
     isOnline() { return this.engine.status === 'online'; }
@@ -80,6 +111,7 @@
         this.position = Explanation.positionReport(features, engineAnalysis);
         this.setStatus(`Position ready · depth ${engineAnalysis.depth || this.getDepth()}`, 'ready');
         if (this.tab === 'position') this.renderPosition();
+        this.requestPositionGrounding({ game, fen, features, engineAnalysis, token });
         return engineAnalysis;
       }).catch(error => {
         if (token !== this.token) return null;
@@ -112,16 +144,50 @@
         const bestVariation = Variation.build(entry.beforeFen, beforeAnalysis.lines?.[0]?.pv || '', 9);
         const report = Explanation.moveReport({ entry, beforeAnalysis, afterAnalysis, beforeFeatures, afterFeatures, chosenVariation, bestVariation });
         this.reports.set(historyIndex, report);
+        this.recorder.record({ entry, beforeAnalysis, afterAnalysis, beforeFeatures, afterFeatures, report });
+        this.refreshExportControl();
         this.position = Explanation.positionReport(afterFeatures, afterAnalysis);
         if (token === this.token) {
           this.setStatus(`Coach report ready · depth ${afterAnalysis.depth || depth}`, 'ready');
           this.renderActive();
         }
+        this.requestMoveGrounding({
+          entry, beforeAnalysis, afterAnalysis, beforeFeatures, afterFeatures,
+          report, historyIndex,
+        });
       }).catch(error => {
         if (token !== this.token) return;
         this.setStatus(error.message || 'The coach could not grade this move.', 'offline');
         this.renderMovePlaceholder('The move is recorded, but its engine verdict is unavailable.');
       });
+    }
+
+    requestMoveGrounding({ entry, beforeAnalysis, afterAnalysis, beforeFeatures, afterFeatures, report, historyIndex }) {
+      if (!this.grounding) return;
+      this.grounding.predictMove({
+        entry, beforeAnalysis, afterAnalysis, beforeFeatures, afterFeatures,
+        loss: report.loss,
+        legalMoves: legalMovesForFen(entry.beforeFen),
+      }).then(prediction => {
+        if (this.reports.get(historyIndex) !== report) return;
+        report.grounding = prediction;
+        if (this.tab === 'move' && this.selectedMoveIndex === historyIndex) this.renderMove(report);
+      }).catch(() => { /* The verified Stockfish report remains fully usable offline. */ });
+    }
+
+    requestPositionGrounding({ game, fen, features, engineAnalysis, token }) {
+      if (!this.grounding) return;
+      this.grounding.predictPosition({
+        fen,
+        analysis: engineAnalysis,
+        features,
+        mover: game.turn,
+        legalMoves: legalMovesForFen(fen),
+      }).then(prediction => {
+        if (token !== this.token || (this.position?.fen && this.position.fen !== fen)) return;
+        if (this.position) this.position.grounding = prediction;
+        if (this.tab === 'position') this.renderPosition();
+      }).catch(() => { /* Static features and Stockfish remain the fallback. */ });
     }
 
     onUndo(game) {
@@ -159,6 +225,7 @@
       const reasons = element('ul', 'coach-reasons');
       report.reasons.forEach(reason => reasons.append(element('li', '', reason)));
       const forecast = element('p', 'coach-forecast', report.forecast);
+      const grounding = this.renderGrounding(report.grounding, report.verdict, report.chosenVariation?.startFen);
       const chosenLine = element('div', 'coach-line');
       chosenLine.append(element('span', 'coach-line-label', 'Projected response'), element('p', '', report.chosenVariation.san || 'No continuation returned.'));
       const actions = element('div', 'coach-actions');
@@ -173,7 +240,35 @@
         previewBest.addEventListener('click', () => this.onPreview(report.bestVariation, 'Engine best line'));
         actions.append(previewBest);
       }
-      this.ui.body.replaceChildren(verdict, reasons, forecast, chosenLine, actions);
+      this.ui.body.replaceChildren(verdict, reasons, forecast, grounding, chosenLine, actions);
+    }
+
+    renderGrounding(prediction, verifiedVerdict = '', fen = '') {
+      const panel = element('div', 'coach-grounding');
+      if (!prediction) { panel.hidden = true; return panel; }
+      const concept = prediction.concepts?.[0];
+      const verdict = prediction.verdict;
+      const signals = element('ul');
+      if (concept) signals.append(element('li', '', `Strategic theme: ${conceptName(concept.name)} (${probability(concept.probability)} confidence).`));
+      if (verdict) {
+        const comparison = verdict.name === verifiedVerdict
+          ? `agrees with Stockfish's ${verifiedVerdict} verdict`
+          : `estimates ${verdict.name}; Stockfish grades the move ${verifiedVerdict}`;
+        signals.append(element('li', '', `Move verdict: ${comparison} (${probability(verdict.probability)} confidence).`));
+      }
+      const played = prediction.policy?.played;
+      const top = prediction.policy?.top?.[0];
+      if (played) {
+        signals.append(element('li', '', `Policy rank: ${sanForUci(fen, played.uci)} is ${played.rank} of ${prediction.policy.legalMoveCount} legal moves (${probability(played.probability)}).`));
+      }
+      if (top && (!played || top.uci !== played.uci)) {
+        signals.append(element('li', '', `Highest learned move signal: ${sanForUci(fen, top.uci)} (${probability(top.probability)}).`));
+      }
+      if (!verdict && prediction.wdl) {
+        signals.append(element('li', '', `Side-to-move outlook: win ${probability(prediction.wdl.win)}, draw ${probability(prediction.wdl.draw)}, loss ${probability(prediction.wdl.loss)}.`));
+      }
+      panel.append(element('strong', '', 'Neural grounding'), signals, element('p', 'coach-grounding-note', 'Advisory model signal. Stockfish and verified board facts remain authoritative.'));
+      return panel;
     }
 
     renderPosition() {
@@ -192,7 +287,7 @@
       Object.entries(this.position.details).forEach(([name, value]) => {
         details.append(element('dt', '', name), element('dd', '', value));
       });
-      this.ui.body.replaceChildren(header, columns, details);
+      this.ui.body.replaceChildren(header, columns, this.renderGrounding(this.position.grounding, '', this.position.fen), details);
     }
   }
 

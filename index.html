@@ -131,9 +131,15 @@
               <button class="active" id="coach-move-tab" type="button" role="tab">Move</button>
               <button id="coach-position-tab" type="button" role="tab">Position</button>
             </div>
+            <div class="coach-model-state" id="coach-model-state" data-state="offline" role="status" aria-live="polite">
+              <span class="coach-model-dot" id="coach-model-dot" aria-hidden="true"></span>
+              <span id="coach-model-status">Neural model offline · Stockfish fallback active</span>
+              <button class="text-button" id="coach-model-retry" type="button">Retry</button>
+            </div>
             <p class="coach-status" id="coach-status">Play a move to begin.</p>
             <div class="coach-body" id="coach-body"></div>
             <button class="connect-button" id="coach-connect" type="button">Connect Stockfish</button>
+            <button class="text-button coach-export-data" id="coach-export-data" type="button" disabled>Export model data</button>
           </section>
 
           <section class="analysis-card" id="analysis-card">
@@ -340,6 +346,8 @@
     <script src="js/coach/move-grader.js"></script>
     <script src="js/coach/explanation-builder.js"></script>
     <script src="js/coach/analysis-coordinator.js"></script>
+    <script src="js/coach/training-recorder.js"></script>
+    <script src="js/coach/grounding-client.js"></script>
     <script src="js/coach/coach-controller.js"></script>
     <script src="js/openings/opening-prep-controller.js"></script>
     <script src="js/tournament/tournament-clock.js"></script>

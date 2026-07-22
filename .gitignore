@@ -1,0 +1,7 @@
+/datasets/
+/.tools/
+/ai/.venv/
+/ai/artifacts/
+/artifacts/
+*.pt
+*.onnx

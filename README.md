@@ -10,6 +10,8 @@ Tournament Room is the first foundation for a polished 3D chess tournament-train
 - An optional local Stockfish connector. The browser never launches executables or sends positions over the network; a loopback-only bridge talks UCI to the bundled Stockfish executable in `lib\stockfish`.
 - A launch menu for free-form analysis, coached play, opening preparation, and tournament simulation.
 - A grounded AI Coach mode that grades moves with Stockfish, explains material, activity, pawn structure, and king safety, and previews principal variations without changing the live game.
+- An optional checkpoint-backed neural grounding service that adds learned verdict, concept, WDL, and legal-move policy signals without replacing Stockfish's verified analysis.
+- A resumable PGN-to-JSONL dataset builder that legally replays games, caches Stockfish MultiPV/WDL labels, and preserves game-level split provenance.
 - An Opening Prep mode with six opening families, learn/practice workflows, repertoire branches, key ideas, and browser-local progress.
 - Tournament games with selectable Stockfish or CustomChessEngine opponents, player color, time controls, touch-move enforcement, a cursor-following selected piece, player clock presses, and automatic engine clock presses.
 - Local-network tournament rooms for playing on two devices. A six-character room code pairs the browsers through a lightweight WebSocket relay running on the host computer; moves and clocks are validated in both browsers and never sent to a cloud service.
@@ -33,7 +35,18 @@ Open a PowerShell window in this folder and run:
 powershell -ExecutionPolicy Bypass -File .\tools\start-tournament-room.ps1
 ```
 
-This starts the local-only Stockfish bridge, the local-network tournament relay, and the web app. It opens the app at `http://127.0.0.1:8787/` and prints a second network address such as `http://192.168.1.20:8787/`.
+This starts the local-only Stockfish bridge, the local-network tournament relay, and the web app. If `ai\artifacts\chess-coach-grounding.onnx` and the inference dependencies are present, it also starts the neural grounding service. It opens the app at `http://127.0.0.1:8787/` and prints a second network address such as `http://192.168.1.20:8787/`.
+
+To enable the trained checkpoint after downloading it from the training Pod:
+
+```powershell
+python -m venv .\ai\.venv
+.\ai\.venv\Scripts\python -m pip install -r .\ai\requirements-inference.txt
+New-Item -ItemType Directory -Force .\ai\artifacts | Out-Null
+# Copy the exported model and metadata to .\ai\artifacts\chess-coach-grounding.onnx*
+```
+
+The full-precision ONNX model is preferred because ONNX Runtime is substantially smaller than a local PyTorch installation. The `.pt` checkpoint remains supported when PyTorch is installed. The app deliberately falls back to its Stockfish and deterministic-feature coach if the model service is absent or fails. Use `-NoGrounding` to skip service startup explicitly.
 
 To play on another device:
 
@@ -54,7 +67,25 @@ The launcher is already pointed at `lib\stockfish\stockfish-windows-x86-64-avx2.
 
 ## AI Coach and Opening Prep
 
-Choose **AI coach** from the session menu and play moves normally. The coach uses local Stockfish MultiPV and win/draw/loss output for its verdict, while a deterministic feature analyzer grounds the written explanation in the board's material, activity, pawn structure, and king safety. Use **Preview played line** or **Preview best line** to step through a projected continuation; the scoresheet and live position remain unchanged.
+Choose **AI coach** from the session menu and play moves normally. The coach uses local Stockfish MultiPV and win/draw/loss output for its authoritative verdict, while a deterministic feature analyzer grounds the written explanation in the board's material, activity, pawn structure, and king safety. When the trained grounding service is available, its learned concept and verdict estimates appear as a separate **Neural grounding** panel. Neural policy output is filtered through the position's legal moves and never overrides Stockfish. Use **Preview played line** or **Preview best line** to step through a projected continuation; the scoresheet and live position remain unchanged.
+
+The coach card shows the neural model's connection state independently from Stockfish. A connected report includes the model's strategic concept, Stockfish-verdict agreement, legal-move policy rank, highest learned move signal, and side-to-move WDL outlook. If the service stops or returns an incompatible schema, the card switches to **Stockfish fallback active** and exposes a retry control without interrupting the verified coach report.
+
+Completed coach reports are also retained in a small browser-local training buffer. **Export model data** downloads those grounded examples as JSONL for the custom chess-language model; the buffer is capped, replaces duplicate position/move samples, and is never uploaded automatically. For larger corpora, `tools/build-coach-dataset.ps1` replays PGN files and labels sampled moves through the local Stockfish bridge. The model architecture, dataset instructions, and training entry point live under `ai/`.
+
+Long labeling jobs can use `tools/build-coach-dataset-parallel.ps1`. It assigns
+whole games to deterministic shards, launches independent Stockfish UCI
+workers, resumes each shard and engine cache separately, and produces a merged
+dataset only after settings, shard ownership, counts, and duplicates pass
+validation. The same workflow is available on RunPod through
+`ai/cloud/label-and-train-runpod.sh` with separate labeling and training time
+limits.
+
+For a reproducible public source, `tools/get-public-coach-data.ps1` downloads
+and verifies a CC0 Lichess standard-rated archive, then writes a bounded,
+rating-filtered PGN sample under the Git-ignored `datasets/` directory. That
+sample is still passed through Stockfish before model training; raw game results
+are never treated as coaching explanations.
 
 Choose **Opening Prep** to study the Italian Game, Ruy Lopez, Queen's Gambit, Sicilian Defense, French Defense, or Caro-Kann. **Learn the line** enables step-by-step playback. **Practice from memory** hides the prepared line, validates repertoire moves, supplies the opponent reply, and records completion and accuracy in browser-local storage.
 
@@ -67,7 +98,8 @@ Coach verdicts require the local Stockfish bridge. Opening lessons and static po
 | Rules | `js/domain/chess.js` | Shared desktop/server validation package |
 | 3D view | `js/rendering/solid-board.js` and `js/rendering/renderer.js` | Camera presets and tournament-room polish |
 | Engine | `js/engines/stockfish-client.js` and the local UCI bridge | Desktop sidecar with multi-PV and configurable strength |
-| Coach | `js/coach/` combines Stockfish results with deterministic position features | Optional grounded conversational narrator |
+| Coach | `js/coach/` combines Stockfish results, deterministic position features, and optional checkpoint inference | Grounded conversational narrator |
+| AI model | `ai/chess_coach/` contains the relation-aware 64-square encoder, training pipeline, and loopback inference server; `tools/dataset/` builds game-grouped Stockfish labels | Attach and tune a licensed language decoder |
 | Opening prep | `js/openings/` and `data/openings/` | Larger user-selectable repertoires and synced progress |
 | Custom engine | `js/engines/custom-engine-client.js` and its worker | Worker-backed tactical search and selectable personality profiles |
 | Tournament session | `js/app.js` and `js/tournament/tournament-clock.js` keep match rules, clock state, and opponent turns separate from analysis | Saved tournament metadata and adjudication history |

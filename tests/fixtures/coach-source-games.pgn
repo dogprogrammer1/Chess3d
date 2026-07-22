@@ -1,0 +1,15 @@
+[Event "Comments and variations"]
+[Site "Local"]
+[Date "2026.07.21"]
+[WhiteElo "1650"]
+[BlackElo "1600"]
+[Result "1-0"]
+
+1. e4 {Claims the center.} e5 2. Qh5?! Nc6 (2... Nf6 3. Qxe5+) 3. Bc4 Nf6?? $2 4. Qxf7# 1-0
+
+[Event "Castling replay"]
+[Site "Local"]
+[Date "2026.07.21"]
+[Result "1/2-1/2"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 6. Re1 b5 7. Bb3 d6 8. c3 O-O 1/2-1/2
