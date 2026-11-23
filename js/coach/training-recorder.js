@@ -59,8 +59,9 @@
   }
 
   class CoachTrainingRecorder {
-    constructor(storage = window.localStorage, limit = 200) {
-      this.storage = storage;
+    constructor(storage, limit = 200) {
+      try { this.storage = storage === undefined ? window.localStorage : storage; }
+      catch { this.storage = null; }
       this.limit = limit;
       this.examples = this.load();
     }

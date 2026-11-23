@@ -32,10 +32,12 @@
     constructor() {
       this.game = new ChessGame();
       this.storage = new GameStorage();
-      this.engine = new StockfishClient();
+      const ports = document.documentElement.dataset;
+      this.engine = new StockfishClient(`ws://127.0.0.1:${ports.bridgePort}/`);
       this.customEngine = new CustomChessEngine();
-      this.groundingCoach = new GroundingCoachClient();
+      this.groundingCoach = new GroundingCoachClient({ url: `http://127.0.0.1:${ports.groundingPort}` });
       this.roomClient = new RoomClient({
+        port: ports.roomPort,
         onStatus: (status, detail) => this.handleRoomStatus(status, detail),
         onMessage: (type, payload) => this.handleRoomMessage(type, payload)
       });
@@ -57,6 +59,8 @@
       this.lastEngineStats = '';
       this.cameraState = { pitch: 54, yaw: 0, panX: 0, panY: 0, zoom: 1, pressed: new Set(), frame: null };
       this.renderer = new BoardRenderer(ui.board, square => this.handleSquare(square));
+      document.querySelector('.camera-section').hidden = !this.renderer.solidScene?.available;
+      $('flat-board-note').hidden = Boolean(this.renderer.solidScene?.available);
       this.renderer.setTournamentController({
         isActive: () => this.isTournament(),
         beginDrag: square => this.beginTournamentDrag(square),
@@ -81,8 +85,7 @@
       this.setEngineControls();
       this.applyCamera();
       this.render();
-      this.connectGrounding(true);
-      if (this.engineKind() === 'stockfish') this.connectEngine(true);
+      ui.launchAnalysis.focus();
     }
 
     bindEvents() {
@@ -94,7 +97,8 @@
         this.cancelEngineSearch();
         this.lastEngineStats = '';
         this.setEngineControls();
-        this.analyse();
+        if (this.engineKind() === 'stockfish') { this.resetEvaluation(); this.connectEngine(true); }
+        else this.analyse();
       });
       ui.depth.addEventListener('input', () => this.updateDepth());
       ui.camera.addEventListener('input', () => { this.cameraState.pitch = Number(ui.camera.value); this.applyCamera(); });
@@ -103,6 +107,8 @@
       ui.copyPgn.addEventListener('click', () => this.copy(this.game.pgn(), 'PGN copied.'));
       ui.copyFen.addEventListener('click', () => this.copy(this.game.fen(), 'FEN copied.'));
       ui.connect.addEventListener('click', () => this.connectEngine());
+      $('tournament-reconnect').addEventListener('click', () => this.connectEngine());
+      ui.promotion.addEventListener('cancel', () => { this.pendingPromotion = null; });
       ui.coachConnect.addEventListener('click', () => this.connectEngine());
       ui.coachModelRetry.addEventListener('click', () => this.connectGrounding());
       ui.openMenu.addEventListener('click', event => { event.preventDefault(); this.openModeMenu(); });
@@ -138,6 +144,8 @@
     bindEngine() {
       this.engine.onStatus((status, detail) => {
         if (this.engineKind() !== 'stockfish') return;
+        $('tournament-reconnect').hidden = !this.isTournament() || status !== 'offline' || this.isGameOver();
+        ui.coachDot.className = `engine-dot ${status}`;
         ui.engineDot.className = `engine-dot ${status === 'online' ? 'online' : status === 'connecting' ? 'connecting' : 'offline'}`;
         ui.engineDot.title = status === 'online' ? 'Stockfish connected' : status === 'connecting' ? 'Connecting to Stockfish' : 'Stockfish offline';
         if (status === 'connecting') { ui.engineMessage.textContent = 'Looking for the local Stockfish bridge…'; ui.connect.disabled = true; ui.connect.textContent = 'Connecting…'; ui.coachConnect.disabled = true; ui.coachConnect.textContent = 'Connecting…'; }
@@ -150,18 +158,26 @@
         if (status === 'offline') {
           ui.connect.disabled = false; ui.connect.textContent = 'Connect engine'; this.engineThinking = false;
           ui.coachConnect.disabled = false; ui.coachConnect.textContent = 'Connect Stockfish';
-          if (!this.isTournament()) ui.engineMessage.textContent = detail || 'Engine offline. Start the local bridge to analyse this board.';
+          if (this.isTournament() && !this.isGameOver() && ui.menu.hidden) {
+            this.tournament.waitingForEngine = true;
+            this.clock?.stop();
+            ui.hint.textContent = 'Clock paused. Start the local bridge and choose Reconnect Stockfish.';
+          } else {
+            ui.engineMessage.textContent = detail || 'Engine offline. Start the local bridge or select CustomChessEngine.';
+          }
+          this.resetEvaluation();
           if (this.isCoach()) this.coach.start(this.game);
         }
       });
       this.engine.onAnalysis = message => {
-        if (this.appMode !== 'analysis' || this.engineKind() !== 'stockfish' || message.fen !== this.game.fen()) return;
+        if (this.appMode !== 'analysis' || !ui.menu.hidden || this.engineKind() !== 'stockfish' || message.requestId !== this.analysisRequestId || message.fen !== this.game.fen()) return;
         const whiteScore = this.game.turn === 'w' ? Number(message.score) : -Number(message.score);
         const display = message.scoreType === 'mate' ? `M${whiteScore > 0 ? '+' : ''}${whiteScore}` : `${whiteScore >= 0 ? '+' : ''}${(whiteScore / 100).toFixed(2)}`;
         this.lastEngineStats = `${Number(message.nodes || 0).toLocaleString()} nodes · depth ${message.depth || ui.depth.value}`;
         this.refreshEngineProfile();
         ui.evalScore.textContent = display;
-        ui.evalMeter.style.width = `${Math.max(4, Math.min(96, 50 + whiteScore / 24))}%`;
+        const meter = message.scoreType === 'mate' ? (whiteScore > 0 ? 96 : 4) : 50 + whiteScore / 24;
+        ui.evalMeter.style.width = `${Math.max(4, Math.min(96, meter))}%`;
         ui.pv.textContent = message.pv || 'No principal variation returned.';
       };
       this.engine.onBestMove = message => {
@@ -188,7 +204,7 @@
           ui.coachModelStatus.textContent = `Neural model ready · ${size} · ${precision}`;
           return;
         }
-        ui.coachModelStatus.textContent = 'Neural model offline · Stockfish fallback active';
+        ui.coachModelStatus.textContent = 'Optional neural model offline';
       });
     }
 
@@ -242,6 +258,7 @@
       ui.modeChoiceGrid.hidden = true;
       ui.tournamentSetup.hidden = false;
       this.updateTournamentSetup();
+      ui.tournamentOpponent.focus();
     }
     hideTournamentSetup() {
       ui.tournamentSetup.hidden = true;
@@ -249,6 +266,8 @@
     }
     openModeMenu() {
       this.exitVariationPreview(false);
+      this.cameraState.pressed.clear();
+      this.cancelEngineSearch();
       this.coach.stop();
       this.openingPrep.stop();
       if (this.isTournament()) {
@@ -257,12 +276,17 @@
           ui.hint.textContent = 'Network match ended. Choose a new session to begin again.';
         } else {
           this.clock?.stop();
-          this.cancelEngineSearch();
           ui.hint.textContent = 'Tournament paused. Choose a new session to begin again.';
         }
       }
       this.hideTournamentSetup();
-      ui.menu.hidden = false;
+      this.setMenuVisible(true);
+    }
+    setMenuVisible(visible) {
+      ui.menu.hidden = !visible;
+      document.querySelector('.app-shell').inert = visible;
+      if (visible) ui.launchAnalysis.focus();
+      else this.renderer.focus();
     }
     startAnalysis() {
       const previousMode = this.appMode;
@@ -271,8 +295,8 @@
       this.openingPrep.stop();
       this.appMode = 'analysis';
       if (previousMode === 'opening-prep') this.game = new ChessGame();
-      ui.menu.hidden = true;
-      if (ui.engineSelect.value === 'peer') ui.engineSelect.value = 'stockfish';
+      this.setMenuVisible(false);
+      if (ui.engineSelect.value === 'peer') ui.engineSelect.value = 'custom';
       ui.engineSelect.disabled = false;
       this.timeoutResult = null;
       this.touchMove = null;
@@ -280,7 +304,8 @@
       this.setEngineControls();
       this.render();
       ui.hint.textContent = 'Select a piece to see its legal moves.';
-      this.analyse();
+      if (this.engineKind() === 'stockfish') this.connectEngine(true);
+      else this.analyse();
     }
     startCoach() {
       const previousMode = this.appMode;
@@ -288,7 +313,7 @@
       this.openingPrep.stop();
       this.appMode = 'coach';
       if (previousMode === 'opening-prep' || previousMode === 'tournament') this.game = new ChessGame();
-      ui.menu.hidden = true;
+      this.setMenuVisible(false);
       ui.engineSelect.value = 'stockfish';
       ui.engineSelect.disabled = true;
       this.timeoutResult = null;
@@ -306,7 +331,7 @@
       this.coach.stop();
       this.appMode = 'opening-prep';
       this.game = new ChessGame();
-      ui.menu.hidden = true;
+      this.setMenuVisible(false);
       ui.engineSelect.disabled = false;
       this.timeoutResult = null;
       this.touchMove = null;
@@ -367,21 +392,13 @@
         onTick: () => this.renderClocks(),
         onFlag: color => this.handleTimeout(color)
       });
-      ui.menu.hidden = true;
+      this.setMenuVisible(false);
       this.setEngineControls();
       this.render();
       if (config.opponent === 'stockfish' && this.engine.status !== 'online') {
         this.tournament.waitingForEngine = true;
         ui.hint.textContent = 'Connecting Stockfish before the tournament clock starts…';
-        this.engine.connect().then(() => {
-          if (this.isTournament() && this.tournament.waitingForEngine) this.beginTournamentClock();
-        }).catch(() => {
-          if (!this.isTournament()) return;
-          this.tournament.waitingForEngine = false;
-          ui.hint.textContent = 'Stockfish could not connect. Start the local bridge, then use Connect engine.';
-          this.showToast('Tournament clock has not started.');
-          this.renderClocks();
-        });
+        this.connectEngine(true);
       } else {
         this.beginTournamentClock();
       }
@@ -391,6 +408,7 @@
       this.clock = null;
       this.tournament = null;
       this.touchMove = null;
+      this.lastEngineStats = '';
       this.timeoutResult = null;
       this.cancelEngineSearch();
       this.renderer.cancelTournamentDrag();
@@ -402,9 +420,10 @@
     beginTournamentClock() {
       if (!this.isTournament() || this.isGameOver()) return;
       this.tournament.waitingForEngine = false;
-      this.clock.start(this.game.turn);
+      this.clock.start(this.tournament.awaitingClockPress ? this.playerColor() : this.game.turn);
       this.renderClocks();
-      if (this.game.turn === this.playerColor()) ui.hint.textContent = 'Your clock is running. Touch a piece to begin your move.';
+      if (this.tournament.awaitingClockPress) ui.hint.textContent = 'Press your clock to complete your turn.';
+      else if (this.game.turn === this.playerColor()) ui.hint.textContent = 'Your clock is running. Touch a piece to begin your move.';
       else if (this.isPeerTournament()) ui.hint.textContent = 'Waiting for the other player’s move…';
       else this.maybeEngineTurn();
     }
@@ -559,11 +578,12 @@
       const depth = ui.depth.value;
       ui.selectedEngineName.textContent = this.engineName();
       const base = custom
-        ? `Classical evaluation · aggressive · about 1900 · depth ${depth}`
+        ? `Classical evaluation · depth ${depth}`
         : `Local UCI bridge · ${this.isCoach() ? 'grounded coach analysis' : 'tournament engine'} · depth ${depth}`;
       ui.selectedEngineStats.textContent = this.lastEngineStats ? `${base} · ${this.lastEngineStats}` : base;
     }
     setEngineControls() {
+      $('tournament-reconnect').hidden = !this.isTournament() || this.engineKind() !== 'stockfish' || this.engine.status !== 'offline' || this.isGameOver();
       ui.analysisCard.hidden = this.isTournament() || this.isCoach() || this.isOpeningPrep();
       ui.coachCard.hidden = !this.isCoach();
       ui.openingCard.hidden = !this.isOpeningPrep();
@@ -613,8 +633,8 @@
         ui.engineDot.className = 'engine-dot online';
         ui.engineDot.title = 'CustomChessEngine ready';
         ui.engineMessage.textContent = this.isTournament()
-          ? 'Tournament opponent ready · aggressive classical play · approximately 1900 strength.'
-          : 'Classical evaluation · aggressive style · approximately 1900 strength.';
+          ? 'The custom engine is ready to play.'
+          : 'Static board score in pawns. Positive favors White.';
         ui.pv.textContent = 'The custom engine searches locally in the browser.';
         ui.connect.disabled = true;
         ui.connect.textContent = 'CustomChessEngine ready';
@@ -625,7 +645,7 @@
         ui.connect.textContent = this.engine.status === 'online' ? 'Engine connected' : this.engine.status === 'connecting' ? 'Connecting…' : 'Connect engine';
         ui.engineMessage.textContent = this.engine.status === 'online'
           ? (this.isTournament() ? 'Stockfish is ready for the tournament table.' : 'Connected locally. Evaluation updates after each move.')
-          : 'Engine offline. Start the local bridge to analyse this board.';
+          : 'Start the local Stockfish bridge or select CustomChessEngine.';
       }
     }
     updateDepth() {
@@ -642,11 +662,12 @@
 
     handleCameraKey(event, isDown) {
       const target = event.target;
-      if (target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement || ui.promotion.open || ui.rules.open || ui.peerDialog.open) return;
+      if (!isDown) this.cameraState.pressed.delete(event.code);
+      if (!this.renderer.solidScene?.available || !ui.menu.hidden || target.closest?.('button, a, input, select, textarea, [contenteditable="true"]') || ui.promotion.open || ui.rules.open || ui.peerDialog.open) return;
       const keys = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyI', 'KeyJ', 'KeyK', 'KeyL', 'Space', 'ShiftLeft', 'ShiftRight']);
       if (!keys.has(event.code)) return;
       event.preventDefault();
-      if (isDown) this.cameraState.pressed.add(event.code); else this.cameraState.pressed.delete(event.code);
+      if (isDown) this.cameraState.pressed.add(event.code);
       if (isDown && !this.cameraState.frame) this.cameraState.frame = requestAnimationFrame(() => this.advanceCamera());
     }
     advanceCamera() {
@@ -782,6 +803,7 @@
       if (this.isOpeningPrep()) this.openingPrep.afterMove(entry, source);
       if (this.game.result) {
         this.clock?.stop();
+        this.analyse();
         this.render();
         ui.hint.textContent = this.game.result;
         this.showToast(this.game.result);
@@ -931,14 +953,49 @@
       this.renderer.cancelTournamentDrag();
       if (render) this.renderer.render();
     }
-    analyse() {
-      if (this.isTournament() || this.isCoach() || this.isOpeningPrep()) return;
-      if (this.engineKind() === 'stockfish' && this.engine.status === 'online') this.engine.analyse(this.game.fen(), Number(ui.depth.value));
+    resetEvaluation(line = '') {
+      ui.evalScore.textContent = '—';
+      ui.evalMeter.style.width = '50%';
+      ui.pv.textContent = line;
+      this.lastEngineStats = '';
+      this.refreshEngineProfile();
+    }
+    async analyse() {
+      if (this.appMode !== 'analysis' || !ui.menu.hidden) return;
+      this.cancelEngineSearch();
+      this.analysisRequestId = null;
+      this.resetEvaluation(this.game.result || '');
+      if (this.game.result) return;
+      const fen = this.game.fen();
+      const depth = Number(ui.depth.value);
+      if (this.engineKind() === 'stockfish') {
+        if (this.engine.status === 'online') {
+          ui.pv.textContent = 'Searching for a continuation…';
+          this.analysisRequestId = this.engine.analyse(fen, depth);
+        }
+        return;
+      }
+      const token = this.engineRequestToken;
+      ui.pv.textContent = 'Searching for a move…';
+      try {
+        const result = await this.customEngine.chooseMove(this.game, depth);
+        if (token !== this.engineRequestToken) return;
+        if (!result) { ui.pv.textContent = 'No legal move.'; return; }
+        const line = window.TournamentCoachVariation.build(fen, result.move, 1);
+        ui.pv.textContent = line.san ? `Suggested move: ${line.san} (${result.move})` : 'No legal suggestion for this position.';
+        ui.evalScore.textContent = `${result.score >= 0 ? '+' : ''}${result.score.toFixed(2)}`;
+        ui.evalMeter.style.width = `${Math.max(4, Math.min(96, 50 + result.score * 100 / 24))}%`;
+        this.lastEngineStats = `${result.nodes.toLocaleString()} nodes · ${Math.round(result.elapsedMs)} ms`;
+        this.refreshEngineProfile();
+      } catch (error) {
+        if (token === this.engineRequestToken) ui.pv.textContent = error.message;
+      }
     }
     connectEngine(silent = false) {
       if (this.engineKind() === 'peer') { this.showToast('The other device connects through the tournament room.'); return; }
       if (this.engineKind() === 'custom') { this.showToast('The custom engine runs locally in this browser.'); return; }
       this.engine.connect().then(() => {
+        if (!ui.menu.hidden || this.engineKind() !== 'stockfish') return;
         this.analyse();
         if (this.isTournament() && this.tournament.waitingForEngine) this.beginTournamentClock();
       }).catch(() => { if (!silent) this.showToast('Bridge unavailable. See the setup guide.'); });
@@ -961,7 +1018,7 @@
       ui.timeControlLabel.textContent = this.tournament.label;
       [['w', ui.whiteClock], ['b', ui.blackClock]].forEach(([color, button]) => {
         const player = color === this.playerColor();
-        const awaiting = player && this.tournament.awaitingClockPress;
+        const awaiting = player && this.tournament.awaitingClockPress && !this.tournament.waitingForEngine && !this.isGameOver();
         button.disabled = !awaiting;
         button.className = `chess-clock ${color === 'w' ? 'white-clock' : 'black-clock'}${snapshot.activeColor === color ? ' active' : ''}${awaiting ? ' awaiting' : ''}`;
         button.setAttribute('aria-label', `${color === 'w' ? 'White' : 'Black'} clock: ${this.formatClock(color === 'w' ? snapshot.white : snapshot.black)}${awaiting ? '. Press to end your turn.' : ''}`);
@@ -1000,9 +1057,11 @@
       ui.moveList.scrollTop = ui.moveList.scrollHeight;
     }
     save() {
-      this.storage.saveSession(this.game, { mode: this.appMode, engine: this.engineKind(), depth: ui.depth.value, tournament: this.isTournament() ? { opponent: this.tournament.opponent, playerColor: this.playerColor(), timeControl: this.tournament.value } : null });
       this.storage.downloadPgn(this.game);
-      this.showToast('Saved locally and exported as a PGN file.');
+      try {
+        this.storage.saveSession(this.game, { mode: this.appMode, engine: this.engineKind(), depth: ui.depth.value, tournament: this.isTournament() ? { opponent: this.tournament.opponent, playerColor: this.playerColor(), timeControl: this.tournament.value } : null });
+        this.showToast('Saved locally and exported as a PGN file.');
+      } catch { this.showToast('PGN exported. Browser storage is unavailable for session recovery.'); }
     }
     async copy(value, message) {
       try { await navigator.clipboard.writeText(value); }

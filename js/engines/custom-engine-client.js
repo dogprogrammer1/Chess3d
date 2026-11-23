@@ -7,9 +7,7 @@
   'use strict';
 
   const MAX_DEPTH = 10;
-  // The local server exposes the application at its root. An absolute route
-  // prevents a nested page from resolving this as e.g. tools/js/worker.js.
-  const WORKER_URL = '/js/engines/custom-engine-worker.js';
+  const WORKER_URL = new URL('custom-engine-worker.js', document.currentScript.src);
 
   class CustomChessEngine {
     constructor() {
@@ -20,8 +18,9 @@
 
     ensureWorker() {
       if (this.worker) return;
-      this.worker = new Worker(WORKER_URL, { type: 'module', name: 'Tournament Room Custom Engine' });
-      this.worker.addEventListener('message', event => {
+      const worker = new Worker(WORKER_URL, { type: 'module', name: 'Tournament Room Custom Engine' });
+      this.worker = worker;
+      worker.addEventListener('message', event => {
         const response = event.data;
         const pending = this.pending.get(response.requestId);
         if (!pending) return;
@@ -34,20 +33,21 @@
           depth: response.depth,
           nodes: response.nodes || 0,
           elapsedMs: response.elapsedMs || 0,
-          style: 'Original CustomChessEngine | classical evaluation | aggressive | approximately 1900',
+          style: 'CustomChessEngine | classical evaluation',
         });
       });
-      this.worker.addEventListener('error', event => {
+      worker.addEventListener('error', event => {
+        if (this.worker !== worker) return;
         const details = [event.message, event.filename, event.lineno ? `line ${event.lineno}` : ''].filter(Boolean).join(' · ');
         const error = new Error(details || 'CustomChessEngine could not load. Restart the local server and try again.');
         window.__customEngineWorkerError = { message: event.message, filename: event.filename, line: event.lineno, column: event.colno };
         this.rejectAll(error);
-        this.worker?.terminate();
+        worker.terminate();
         this.worker = null;
       });
     }
 
-    chooseMove(game, requestedDepth = 4) {
+    async chooseMove(game, requestedDepth = 4) {
       this.ensureWorker();
       const requestId = ++this.requestId;
       const depth = Math.max(1, Math.min(MAX_DEPTH, Number(requestedDepth) || 4));

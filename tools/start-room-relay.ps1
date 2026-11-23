@@ -1,7 +1,8 @@
 param(
   [int]$Port = 8766,
   [int]$WebPort = 8787,
-  [int]$ParentProcessId = 0
+  [int]$ParentProcessId = 0,
+  [string]$ReadyFile = ''
 )
 
 # A tiny local-network WebSocket relay. It never interprets chess state; it
@@ -100,16 +101,19 @@ function Send-RoomState($ClientState, [bool]$Ready, [string]$ErrorMessage = '') 
 }
 
 function Test-ParentIsRunning {
+  if ($ReadyFile -and ![IO.File]::Exists($ReadyFile)) { return $false }
   if ($ParentProcessId -le 0) { return $true }
   try { return !(Get-Process -Id $ParentProcessId -ErrorAction Stop).HasExited } catch { return $false }
 }
 
 $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Any, $Port)
+$listener.ExclusiveAddressUse = $true
 $clients = [Collections.ArrayList]::new()
 $listener.Start()
 Write-Host "Tournament room relay listening on the local network at port $Port."
 
 try {
+  if ($ReadyFile) { [IO.File]::WriteAllText($ReadyFile, 'ready') }
   while (Test-ParentIsRunning) {
     if ($listener.Pending()) {
       $tcp = $listener.AcceptTcpClient()
@@ -126,8 +130,11 @@ try {
     }
 
     foreach ($client in @($clients)) {
-      if (!$client.Stream.DataAvailable) { continue }
       try {
+        if (!$client.Stream.DataAvailable) {
+          if ($client.Tcp.Client.Poll(0, [Net.Sockets.SelectMode]::SelectRead)) { throw 'Client disconnected.' }
+          continue
+        }
         $raw = Receive-WebSocketText $client.Stream
         if ($null -eq $raw) { throw 'Client closed the room.' }
         if (!$client.Room) {
@@ -172,4 +179,5 @@ try {
 } finally {
   foreach ($client in @($clients)) { $client.Tcp.Close() }
   $listener.Stop()
+  if ($ReadyFile) { [IO.File]::Delete($ReadyFile) }
 }

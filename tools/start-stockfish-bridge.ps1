@@ -1,7 +1,8 @@
 param(
   [string]$EnginePath = (Join-Path (Split-Path -Parent $PSScriptRoot) 'lib\stockfish\stockfish-windows-x86-64-avx2.exe'),
   [int]$Port = 8765,
-  [int]$ParentProcessId = 0
+  [int]$ParentProcessId = 0,
+  [string]$ReadyFile = ''
 )
 
 # Local-only UCI bridge. Browsers cannot launch a Windows executable directly;
@@ -73,6 +74,7 @@ function Send-WebSocketText([IO.Stream]$Stream, [string]$Text) {
 }
 function Send-BridgeJson([IO.Stream]$Stream, $Object) { Send-WebSocketText $Stream ($Object | ConvertTo-Json -Compress -Depth 6) }
 function Test-ParentIsRunning {
+  if ($ReadyFile -and ![IO.File]::Exists($ReadyFile)) { return $false }
   if ($ParentProcessId -le 0) { return $true }
   try { return !(Get-Process -Id $ParentProcessId -ErrorAction Stop).HasExited } catch { return $false }
 }
@@ -136,11 +138,13 @@ function Search-Position([string]$Fen, [int]$Depth, [int]$MultiPv = 1) {
   return @{ scoreType = $top.scoreType; score = $top.score; pv = $top.pv; nodes = $top.nodes; depth = $top.depth; wdl = $top.wdl; lines = $orderedLines; move = $bestMove }
 }
 
-Send-Uci 'uci'; Read-Until 'uciok'; Send-Uci 'setoption name UCI_ShowWDL value true'; Send-Uci 'isready'; Read-Until 'readyok'
 $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $Port)
-$listener.Start()
-Write-Host "Stockfish bridge running at ws://127.0.0.1:$Port/ (local connections only)"
+$listener.ExclusiveAddressUse = $true
 try {
+  Send-Uci 'uci'; Read-Until 'uciok'; Send-Uci 'setoption name UCI_ShowWDL value true'; Send-Uci 'isready'; Read-Until 'readyok'
+  $listener.Start()
+  if ($ReadyFile) { [IO.File]::WriteAllText($ReadyFile, 'ready') }
+  Write-Host "Stockfish bridge running at ws://127.0.0.1:$Port/ (local connections only)"
   while (Test-ParentIsRunning) {
     while (!$listener.Pending()) {
       if (!(Test-ParentIsRunning)) { return }
@@ -148,8 +152,14 @@ try {
     }
     $client = $listener.AcceptTcpClient()
     try {
+      $client.ReceiveTimeout = 5000
       $stream = Start-WebSocket $client
-      while ($client.Connected) {
+      while ($client.Connected -and (Test-ParentIsRunning)) {
+        if (!$stream.DataAvailable) {
+          if ($client.Client.Poll(0, [Net.Sockets.SelectMode]::SelectRead)) { break }
+          Start-Sleep -Milliseconds 50
+          continue
+        }
         $rawRequest = Receive-WebSocketText $stream
         if ($null -eq $rawRequest) { break }
         $request = $rawRequest | ConvertFrom-Json
@@ -168,4 +178,5 @@ try {
   $listener.Stop()
   if (!$engine.HasExited) { $engine.Kill() }
   $engine.Dispose()
+  if ($ReadyFile) { [IO.File]::Delete($ReadyFile) }
 }

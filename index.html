@@ -1,18 +1,18 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-bridge-port="8765" data-grounding-port="8770" data-room-port="8766">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#0c1515" />
-    <meta name="description" content="Tournament Room — a focused 3D chess training environment." />
-    <title>Tournament Room</title>
+    <meta name="description" content="Play and explore chess on a hand-built WebGL board with a custom JavaScript chess engine, opening lessons, and tournament clocks." />
+    <title>Chess3D · Tournament Room</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <div class="app-shell">
+    <div class="app-shell" inert>
       <header class="topbar">
         <a class="brand" id="open-mode-menu" href="#" aria-label="Open session menu">
           <span class="brand-mark" aria-hidden="true">&#9822;</span>
@@ -23,7 +23,7 @@
           <button class="text-button mobile-panel-button" id="mobile-controls-toggle" type="button">Controls</button>
           <button class="text-button mobile-panel-button" id="mobile-insights-toggle" type="button">Insights</button>
           <button class="text-button" id="save-game">Save game</button>
-          <button class="profile-button" type="button" title="Account features are coming soon" aria-label="Account features coming soon">CS</button>
+          <a class="text-button source-link" href="https://github.com/dogprogrammer1/Chess3d" target="_blank" rel="noopener">Source code</a>
         </div>
       </header>
 
@@ -40,19 +40,20 @@
             <p class="opponent-description" id="opponent-description">Choose an engine for local position analysis.</p>
             <label class="select-label" for="engine-select" id="engine-select-label">Analysis engine</label>
             <select id="engine-select">
-              <option value="stockfish" selected>Stockfish</option>
-              <option value="custom">CustomChessEngine</option>
+              <option value="custom" selected>CustomChessEngine</option>
+              <option value="stockfish">Stockfish</option>
               <option value="peer" hidden>Another device</option>
             </select>
             <div class="engine-profile" aria-live="polite">
               <span class="engine-profile-label">Selected engine</span>
-              <strong id="selected-engine-name">Stockfish</strong>
-              <p id="selected-engine-stats">Local UCI bridge &middot; tournament engine &middot; depth 14</p>
+              <strong id="selected-engine-name">CustomChessEngine</strong>
+              <p id="selected-engine-stats">Classical evaluation &middot; depth 4</p>
             </div>
             <div id="engine-depth-control">
-              <label class="select-label" for="engine-depth">Search depth <output id="depth-value">14</output></label>
-              <input id="engine-depth" type="range" min="2" max="20" value="14" />
+              <label class="select-label" for="engine-depth">Search depth <output id="depth-value">4</output></label>
+              <input id="engine-depth" type="range" min="1" max="4" value="4" />
             </div>
+            <button class="connect-button" id="tournament-reconnect" type="button" hidden>Reconnect Stockfish</button>
           </section>
           <section class="rail-section opening-controls" id="opening-controls" hidden>
             <p class="eyebrow">Opening Prep</p>
@@ -79,7 +80,8 @@
             <button class="rail-action compact" id="reset-camera"><span>&#9097;</span> Reset angle</button>
             <p class="camera-keys"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move &middot; <kbd>Space</kbd>/<kbd>Shift</kbd> zoom<br><kbd>I</kbd><kbd>J</kbd><kbd>K</kbd><kbd>L</kbd> look</p>
           </section>
-          <p class="rail-footnote">Account sync is planned; no email or game records are sent to a cloud service. Network matches relay moves only between the two local devices.</p>
+          <p class="rail-footnote" id="flat-board-note" hidden>2D board active. Use the arrow keys and Enter to move, or enable WebGL for the 3D view.</p>
+          <p class="rail-footnote">Save game keeps a copy in this browser and downloads a PGN you can review or share.</p>
         </aside>
 
         <section class="board-panel" aria-label="3D chessboard">
@@ -133,7 +135,7 @@
             </div>
             <div class="coach-model-state" id="coach-model-state" data-state="offline" role="status" aria-live="polite">
               <span class="coach-model-dot" id="coach-model-dot" aria-hidden="true"></span>
-              <span id="coach-model-status">Neural model offline · Stockfish fallback active</span>
+              <span id="coach-model-status">Optional neural model offline</span>
               <button class="text-button" id="coach-model-retry" type="button">Retry</button>
             </div>
             <p class="coach-status" id="coach-status">Play a move to begin.</p>
@@ -145,7 +147,7 @@
           <section class="analysis-card" id="analysis-card">
             <div class="card-heading">
               <div>
-                <p class="eyebrow" id="engine-label">Stockfish</p>
+                <p class="eyebrow" id="engine-label">CustomChessEngine</p>
                 <h2 id="analysis-card-title">Position analysis</h2>
               </div>
               <span class="engine-dot offline" id="engine-dot" title="Engine offline"></span>
@@ -154,8 +156,8 @@
               <div class="eval-score" id="eval-score">—</div>
               <div class="eval-meter"><span id="eval-meter-fill"></span></div>
             </div>
-            <p class="engine-message" id="engine-message">Engine offline. Start the local bridge to analyse this board.</p>
-            <div class="pv-line" id="pv-line">Principal variation will appear here.</div>
+            <p class="engine-message" id="engine-message">The custom engine runs in this browser.</p>
+            <div class="pv-line" id="pv-line"></div>
             <button class="connect-button" id="connect-engine">Connect engine</button>
           </section>
 
@@ -220,21 +222,21 @@
       </form>
     </dialog>
 
-    <section class="mode-menu" id="mode-menu" aria-labelledby="mode-menu-title">
+    <section class="mode-menu" id="mode-menu" role="dialog" aria-modal="true" aria-labelledby="mode-menu-title">
       <div class="mode-menu-panel">
-        <p class="eyebrow">Tournament Room</p>
+        <p class="eyebrow">Chess3D &middot; Tournament Room</p>
         <h1 id="mode-menu-title">Choose your session</h1>
-        <p class="mode-menu-copy">Prepare variations freely, or rehearse the rhythm and pressure of a timed tournament game.</p>
+        <p class="mode-menu-copy">Try the custom chess engine on the analysis board, study an opening, or play against the clock.</p>
         <div class="mode-choice-grid" id="mode-choice-grid">
           <button class="mode-choice analysis-choice" id="launch-analysis" type="button">
             <span class="mode-choice-kicker">Explore</span>
             <strong>Analysis board</strong>
-            <span>Free movement, legal move guidance, and engine evaluation.</span>
+            <span>Play either side and see the custom engine's suggested reply.</span>
           </button>
           <button class="mode-choice coach-choice" id="launch-coach" type="button">
             <span class="mode-choice-kicker">Improve</span>
             <strong>AI coach</strong>
-            <span>Grade each move, understand both sides, and preview stronger continuations.</span>
+            <span>Connect local Stockfish to grade moves and explore stronger continuations.</span>
           </button>
           <button class="mode-choice opening-choice" id="launch-opening-prep" type="button">
             <span class="mode-choice-kicker">Prepare</span>
@@ -255,8 +257,8 @@
           <div class="setup-grid">
             <label class="select-label" for="tournament-opponent">Opponent
               <select id="tournament-opponent">
-                <option value="stockfish">Stockfish</option>
-                <option value="custom">CustomChessEngine &middot; aggressive ~1900</option>
+                <option value="custom">CustomChessEngine &middot; browser engine</option>
+                <option value="stockfish">Stockfish &middot; local bridge</option>
                 <option value="peer">Another device &middot; local room</option>
               </select>
             </label>

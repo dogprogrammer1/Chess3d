@@ -21,17 +21,33 @@
       if (this.socket?.readyState === WebSocket.OPEN) return Promise.resolve();
       if (this.socket?.readyState === WebSocket.CONNECTING) return this.connection;
       this.emit('connecting');
+      let socket;
+      try { socket = new WebSocket(this.url); }
+      catch (error) { this.emit('offline', error.message); return Promise.reject(error); }
+      this.socket = socket;
       this.connection = new Promise((resolve, reject) => {
         let done = false;
-        const socket = new WebSocket(this.url);
-        this.socket = socket;
         const timer = setTimeout(() => {
-          if (!done) { done = true; socket.close(); this.emit('offline', 'The local bridge did not answer.'); reject(new Error('Connection timed out.')); }
+          if (!done) {
+            done = true; socket.close(); reject(new Error('Connection timed out.'));
+            if (socket === this.socket) this.emit('offline', 'The local bridge did not answer.');
+          }
         }, 2500);
-        socket.addEventListener('open', () => { if (!done) { done = true; clearTimeout(timer); this.emit('online'); resolve(); } });
-        socket.addEventListener('message', event => this.handleMessage(event));
-        socket.addEventListener('error', () => { if (!done) { done = true; clearTimeout(timer); this.emit('offline', 'Could not connect to the local bridge.'); reject(new Error('Bridge unavailable.')); } });
+        socket.addEventListener('open', () => {
+          if (done || socket !== this.socket) return;
+          done = true; clearTimeout(timer); this.emit('online'); resolve();
+        });
+        socket.addEventListener('message', event => { if (socket === this.socket) this.handleMessage(event); });
+        socket.addEventListener('error', () => {
+          if (done) return;
+          done = true; clearTimeout(timer); reject(new Error('Bridge unavailable.'));
+          if (socket === this.socket) this.emit('offline', 'Could not connect to the local bridge.');
+        });
         socket.addEventListener('close', () => {
+          clearTimeout(timer);
+          if (!done) { done = true; reject(new Error('Stockfish connection closed.')); }
+          if (socket !== this.socket) return;
+          this.socket = null;
           this.pending.forEach(({ reject }) => reject(new Error('Stockfish connection closed.')));
           this.pending.clear();
           if (this.status !== 'offline') this.emit('offline', 'Engine connection closed.');

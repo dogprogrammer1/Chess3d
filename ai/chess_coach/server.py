@@ -99,6 +99,7 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8770)
     parser.add_argument("--device", default="auto")
+    parser.add_argument("--ready-file", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
     if not args.model:
         parser.error("--model or COACH_MODEL_PATH is required")
@@ -109,6 +110,8 @@ def main() -> None:
     server = ThreadingHTTPServer((args.host, args.port), handler)
     print(json.dumps({"status": "ready", "url": f"http://{args.host}:{args.port}", "model": predictor.metadata()}))
     try:
+        if args.ready_file:
+            args.ready_file.touch()
         server.serve_forever()
     except KeyboardInterrupt:
         pass

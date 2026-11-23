@@ -1,106 +1,141 @@
 param(
-  [int]$WebPort = 8787,
-  [int]$BridgePort = 8765,
-  [int]$GroundingPort = 8770,
+  [ValidateRange(1, 65535)][int]$WebPort = 8787,
+  [ValidateRange(1, 65535)][int]$BridgePort = 8765,
+  [ValidateRange(1, 65535)][int]$GroundingPort = 8770,
   [string]$CoachModelPath = '',
   [string]$PythonPath = '',
   [switch]$NoGrounding,
-  [switch]$NoBrowser
+  [switch]$NoBrowser,
+  [ValidateRange(1, 65535)][int]$RoomPort = 8766,
+  [string]$EnginePath = '',
+  [switch]$WebOnly
 )
 
-# Starts the browser app and its local-only Stockfish sidecar with one command.
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$bridgeScript = Join-Path $PSScriptRoot 'start-stockfish-bridge.ps1'
-$roomScript = Join-Path $PSScriptRoot 'start-room-relay.ps1'
-$serverScript = Join-Path $PSScriptRoot 'start-local-server.ps1'
-$groundingScript = Join-Path $PSScriptRoot 'start-grounding-coach.ps1'
-$roomPort = 8766
-$defaultOnnxModel = Join-Path $projectRoot 'ai\artifacts\chess-coach-grounding.onnx'
-$defaultTorchModel = Join-Path $projectRoot 'ai\artifacts\chess-coach-grounding.pt'
-$resolvedModel = if (![string]::IsNullOrWhiteSpace($CoachModelPath)) {
-  [IO.Path]::GetFullPath($CoachModelPath)
-} elseif (Test-Path -LiteralPath $defaultOnnxModel -PathType Leaf) {
-  $defaultOnnxModel
-} else {
-  $defaultTorchModel
-}
+$onWindows = [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT
+$shellName = if ($PSVersionTable.PSEdition -eq 'Desktop') { 'powershell.exe' } elseif ($onWindows) { 'pwsh.exe' } else { 'pwsh' }
+$shellPath = Join-Path $PSHOME $shellName
+$ownedServices = [Collections.Generic.List[object]]::new()
 
-function Test-PortIsListening([int]$Port) {
-  return [bool]([Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners() |
-    Where-Object { $_.Port -eq $Port })
-}
-
-function Wait-ForPort(
-  [int]$Port,
-  [string]$Name,
-  [int]$TimeoutSeconds = 8,
-  [Diagnostics.Process]$Process = $null
-) {
-  $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
-  while ([DateTime]::UtcNow -lt $deadline) {
-    if (Test-PortIsListening $Port) { return }
-    if ($null -ne $Process) {
-      $Process.Refresh()
-      if ($Process.HasExited) { throw "$Name exited before it became ready." }
-    }
-    Start-Sleep -Milliseconds 100
-  }
-  throw "$Name did not start listening on port $Port."
-}
-
-if (Test-PortIsListening $BridgePort) {
-  Write-Host "Using the Stockfish bridge already running on port $BridgePort."
-} else {
-  $powerShell = Join-Path $PSHOME 'powershell.exe'
-  $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"{0}"' -f $bridgeScript), '-Port', $BridgePort, '-ParentProcessId', $PID)
-  $bridge = Start-Process -FilePath $powerShell -ArgumentList $arguments -WorkingDirectory $projectRoot -WindowStyle Hidden -PassThru
+function Test-PortInUse([int]$Port, [Net.IPAddress]$Address = [Net.IPAddress]::Loopback) {
+  $probe = [Net.Sockets.TcpListener]::new($Address, $Port)
+  $probe.ExclusiveAddressUse = $true
   try {
-    Wait-ForPort $BridgePort 'The Stockfish bridge' 30 $bridge
-    Write-Host "Stockfish bridge started locally on port $BridgePort."
-  } catch {
-    if (!$bridge.HasExited) { Stop-Process -Id $bridge.Id -Force }
+    $probe.Start()
+    return $false
+  } catch [Net.Sockets.SocketException] {
+    if ($_.Exception.SocketErrorCode -in @('AddressAlreadyInUse', 'AccessDenied')) { return $true }
     throw
-  }
+  } finally { $probe.Stop() }
 }
 
-if (Test-PortIsListening $RoomPort) {
-  Write-Host "Using the tournament room relay already running on port $RoomPort."
-} else {
-  $powerShell = Join-Path $PSHOME 'powershell.exe'
-  $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"{0}"' -f $roomScript), '-Port', $RoomPort, '-WebPort', $WebPort, '-ParentProcessId', $PID)
-  $roomRelay = Start-Process -FilePath $powerShell -ArgumentList $arguments -WorkingDirectory $projectRoot -WindowStyle Hidden -PassThru
-  try {
-    Wait-ForPort $RoomPort 'The tournament room relay' 30 $roomRelay
-    Write-Host "Tournament room relay started on the local network."
-  } catch {
-    if (!$roomRelay.HasExited) { Stop-Process -Id $roomRelay.Id -Force }
-    throw
+function Stop-OwnedService($Service) {
+  $child = $Service.Process
+  if ([IO.File]::Exists($Service.ReadyFile)) {
+    [IO.File]::Delete($Service.ReadyFile)
+    if ($child.WaitForExit(1500)) { return }
   }
-}
-
-if (!$NoGrounding) {
-  if (Test-PortIsListening $GroundingPort) {
-    Write-Host "Using the grounding service already running on port $GroundingPort."
-  } elseif (Test-Path -LiteralPath $resolvedModel -PathType Leaf) {
-    $powerShell = Join-Path $PSHOME 'powershell.exe'
-    $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"{0}"' -f $groundingScript), '-ModelPath', ('"{0}"' -f $resolvedModel), '-Port', $GroundingPort, '-ParentProcessId', $PID)
-    if (![string]::IsNullOrWhiteSpace($PythonPath)) { $arguments += @('-PythonPath', ('"{0}"' -f $PythonPath)) }
-    $grounding = Start-Process -FilePath $powerShell -ArgumentList $arguments -WorkingDirectory $projectRoot -WindowStyle Hidden -PassThru
-    try {
-      Wait-ForPort $GroundingPort 'The grounding service' 30 $grounding
-      Write-Host "Grounding checkpoint service started on port $GroundingPort."
-    } catch {
-      if (!$grounding.HasExited) { Stop-Process -Id $grounding.Id -Force }
-      Write-Warning "The neural grounding service did not start. The verified Stockfish coach will continue without it. $($_.Exception.Message)"
-    }
+  if ($child.HasExited) { return }
+  # Also stop a native child when a search or model load outlasts the grace period.
+  if ($PSVersionTable.PSEdition -eq 'Desktop') {
+    & taskkill.exe /PID $child.Id /T /F | Out-Null
   } else {
-    Write-Host "Grounding checkpoint not present at $resolvedModel; the verified Stockfish coach remains available."
+    $child.Kill($true)
+  }
+  if (!$child.WaitForExit(3000)) { throw "Service $($child.Id) is still running." }
+}
+
+function Start-OptionalService([string]$Name, [string]$Script, [int]$Port, [string[]]$Options) {
+  $service = $null
+  $readyFile = Join-Path ([IO.Path]::GetTempPath()) ("chess3d-" + [Guid]::NewGuid() + ".ready")
+  try {
+    $scriptPath = Join-Path $PSScriptRoot $Script
+    $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"{0}"' -f $scriptPath), '-Port', $Port,
+      '-ParentProcessId', $PID, '-ReadyFile', ('"{0}"' -f $readyFile)) + $Options
+    $launch = @{ FilePath = $shellPath; ArgumentList = $arguments; WorkingDirectory = $projectRoot; PassThru = $true }
+    if ($onWindows) { $launch.WindowStyle = 'Hidden' }
+    $child = Start-Process @launch
+    $service = [PSCustomObject]@{ Process = $child; ReadyFile = $readyFile }
+    $ownedServices.Add($service)
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    while (!(Test-Path -LiteralPath $readyFile -PathType Leaf)) {
+      if ($child.HasExited) { throw "Service exited with code $($child.ExitCode)." }
+      if ([DateTime]::UtcNow -ge $deadline) { throw "Timed out waiting for port $Port." }
+      Start-Sleep -Milliseconds 100
+    }
+    Write-Host "$Name ready on port $Port."
+    return $true
+  } catch {
+    $reason = $_.Exception.Message
+    if ($null -ne $service) {
+      try { Stop-OwnedService $service } catch { Write-Warning $_.Exception.Message }
+    }
+    Write-Warning "$Name unavailable. $reason The browser engine is available."
+    return $false
   }
 }
 
-$serverArguments = @{ Port = $WebPort; Root = $projectRoot; Network = $true }
-if (!$NoBrowser) { $serverArguments.OpenBrowser = $true }
-& $serverScript @serverArguments
+$webAddress = if ($WebOnly) { [Net.IPAddress]::Loopback } else { [Net.IPAddress]::Any }
+if (Test-PortInUse $WebPort $webAddress) { throw "Web port $WebPort is in use. Close the other server or pass -WebPort with a free port." }
+if (!$WebOnly) {
+  $ports = @($WebPort, $BridgePort, $RoomPort)
+  if (!$NoGrounding) { $ports += $GroundingPort }
+  if (@($ports | Sort-Object -Unique).Count -ne $ports.Count) { throw 'Choose a distinct port for each service.' }
+}
+
+try {
+  $network = $false
+  if (!$WebOnly) {
+    if (!$EnginePath) {
+      $bundled = Join-Path $projectRoot 'lib/stockfish/stockfish-windows-x86-64-avx2.exe'
+      if ($onWindows -and (Test-Path -LiteralPath $bundled -PathType Leaf)) {
+        $EnginePath = $bundled
+      } else {
+        $command = Get-Command stockfish -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($command) { $EnginePath = $command.Source }
+      }
+    }
+    if (Test-PortInUse $BridgePort) {
+      Write-Host "Port $BridgePort is occupied. Skipping Stockfish startup and leaving the existing listener available to the app."
+    } elseif (!$EnginePath -or !(Test-Path -LiteralPath $EnginePath -PathType Leaf)) {
+      Write-Warning 'Stockfish was not found. Use -EnginePath to supply a native executable.'
+    } elseif ((Get-Item -LiteralPath $EnginePath).Length -lt 256 -and (Select-String -LiteralPath $EnginePath -SimpleMatch 'git-lfs.github.com/spec' -Quiet)) {
+      Write-Warning 'The bundled Stockfish file is a Git LFS pointer. Run git lfs pull to download the engine.'
+    } else {
+      $nativeEngine = (Get-Item -LiteralPath $EnginePath).FullName
+      [void](Start-OptionalService 'Stockfish bridge' 'start-stockfish-bridge.ps1' $BridgePort @('-EnginePath', ('"{0}"' -f $nativeEngine)))
+    }
+    if (Test-PortInUse $RoomPort ([Net.IPAddress]::Any)) {
+      Write-Host "Port $RoomPort is occupied. The app will try the existing listener for LAN rooms."
+      $network = $true
+    } else {
+      $network = Start-OptionalService 'LAN room relay' 'start-room-relay.ps1' $RoomPort @('-WebPort', $WebPort)
+    }
+
+    if (!$NoGrounding) {
+      if (!$CoachModelPath) {
+        foreach ($file in @('chess-coach-grounding.onnx', 'chess-coach-grounding.pt')) {
+          $candidate = Join-Path $projectRoot "ai/artifacts/$file"
+          if (Test-Path -LiteralPath $candidate -PathType Leaf) { $CoachModelPath = $candidate; break }
+        }
+      }
+      if (Test-PortInUse $GroundingPort) {
+        Write-Host "Port $GroundingPort is occupied. The app will try the existing listener for neural coaching."
+      } elseif ($CoachModelPath -and (Test-Path -LiteralPath $CoachModelPath -PathType Leaf)) {
+        $options = @('-ModelPath', ('"{0}"' -f (Get-Item -LiteralPath $CoachModelPath).FullName))
+        if ($PythonPath) { $options += @('-PythonPath', ('"{0}"' -f $PythonPath)) }
+        [void](Start-OptionalService 'Neural coach' 'start-grounding-coach.ps1' $GroundingPort $options)
+      } else {
+        Write-Host 'No neural checkpoint found. Stockfish coaching can run independently.'
+      }
+    }
+  }
+  & (Join-Path $PSScriptRoot 'start-local-server.ps1') -Root $projectRoot -Port $WebPort -BridgePort $BridgePort -RoomPort $RoomPort -GroundingPort $GroundingPort -Network:$network -OpenBrowser:(!$NoBrowser)
+} finally {
+  foreach ($service in $ownedServices) {
+    try { Stop-OwnedService $service } catch { Write-Warning $_.Exception.Message }
+    $service.Process.Dispose()
+  }
+}

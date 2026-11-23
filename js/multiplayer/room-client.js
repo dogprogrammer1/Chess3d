@@ -17,7 +17,8 @@
   }
 
   class RoomClient {
-    constructor({ onStatus = () => {}, onMessage = () => {} } = {}) {
+    constructor({ port = 8766, onStatus = () => {}, onMessage = () => {} } = {}) {
+      this.port = port;
       this.onStatus = onStatus;
       this.onMessage = onMessage;
       this.socket = null;
@@ -39,7 +40,7 @@
       if (!['host', 'guest'].includes(role)) return Promise.reject(new Error('Choose whether to create or join the match.'));
 
       const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const url = `${protocol}//${location.hostname}:8766/`;
+      const url = `${protocol}//${location.hostname}:${this.port}/`;
       this.emit('connecting', 'Connecting to the local tournament relay…');
       return new Promise((resolve, reject) => {
         let settled = false;
@@ -49,14 +50,16 @@
           if (settled) return;
           settled = true;
           socket.close();
-          this.emit('failed', 'The tournament relay did not answer.');
+          if (socket === this.socket) this.emit('failed', 'The tournament relay did not answer.');
           reject(new Error('Start Tournament Room with network play enabled, then try again.'));
         }, 4_000);
 
         socket.addEventListener('open', () => {
+          if (socket !== this.socket) return;
           socket.send(JSON.stringify({ type: 'join', room: this.room, role }));
         });
         socket.addEventListener('message', event => {
+          if (socket !== this.socket) return;
           let message;
           try { message = JSON.parse(event.data); } catch { return; }
           if (message.type === 'room-state') {
@@ -84,10 +87,13 @@
         socket.addEventListener('error', () => {
           clearTimeout(timer);
           if (!settled) { settled = true; reject(new Error('Could not reach the local tournament relay.')); }
-          this.emit('failed', 'Could not reach the local tournament relay.');
+          if (socket === this.socket) this.emit('failed', 'Could not reach the local tournament relay.');
         });
         socket.addEventListener('close', () => {
           clearTimeout(timer);
+          if (!settled) { settled = true; reject(new Error('Tournament room connection closed.')); }
+          if (socket !== this.socket) return;
+          this.socket = null;
           if (this.status !== 'idle' && this.status !== 'failed') this.emit('disconnected', 'Tournament room connection closed.');
         });
       });

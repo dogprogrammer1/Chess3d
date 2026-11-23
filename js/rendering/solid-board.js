@@ -544,7 +544,9 @@
       const { width, height } = this.resize();
       const gl = this.gl, elevation = this.camera.pitch * Math.PI / 180, yaw = this.camera.yaw * Math.PI / 180;
       const zoom = Math.max(.78, Math.min(1.22, this.camera.zoom || 1));
-      const distance = 13.3 / zoom, horizontal = Math.cos(elevation) * distance;
+      const aspect = width / height;
+      const distance = 13.3 / (zoom * Math.min(1, aspect));
+      const horizontal = Math.cos(elevation) * distance;
       const right = [Math.cos(yaw), 0, -Math.sin(yaw)];
       const target = [
         -(this.camera.panX || 0) * .012 * right[0],
@@ -556,7 +558,7 @@
         target[1] + Math.sin(elevation) * distance + .45,
         target[2] + Math.cos(yaw) * horizontal
       ];
-      perspective(this.projection, 43 * Math.PI / 180, width / height, .1, 40);
+      perspective(this.projection, 43 * Math.PI / 180, aspect, .1, distance + 25);
       lookAt(this.view, eye, target);
       multiply(this.viewProjection, this.projection, this.view);
       invert(this.inverseViewProjection, this.viewProjection);

@@ -31,11 +31,14 @@
     loadProgress() {
       try { return JSON.parse(localStorage.getItem(PROGRESS_KEY) || '{}'); } catch { return {}; }
     }
-    saveProgress() { localStorage.setItem(PROGRESS_KEY, JSON.stringify(this.progress)); }
+    saveProgress() {
+      try { localStorage.setItem(PROGRESS_KEY, JSON.stringify(this.progress)); }
+      catch { /* The current session still tracks completed lessons. */ }
+    }
 
     async load() {
       if (this.openings.length) return;
-      const response = await fetch('/data/openings/openings.json');
+      const response = await fetch('data/openings/openings.json');
       if (!response.ok) throw new Error('Opening lessons could not be loaded.');
       const data = await response.json();
       this.openings = data.openings || [];
@@ -45,19 +48,21 @@
     }
 
     async start(game) {
+      const token = ++this.token;
       this.game = game;
       this.ui.feedback.textContent = 'Loading opening curriculum…';
       try {
         await this.load();
-        this.selectOpening(false);
+        if (token === this.token) this.selectOpening();
       } catch (error) {
+        if (token !== this.token) return;
         this.ui.feedback.textContent = error.message;
         this.onHint(error.message);
       }
     }
 
     stop() { this.token += 1; }
-    selectOpening(reset = true) {
+    selectOpening() {
       this.opening = this.openings.find(item => item.id === this.ui.opening.value) || this.openings[0];
       if (!this.opening) return;
       this.ui.opening.value = this.opening.id;
@@ -66,7 +71,7 @@
       }));
       this.chapter = this.opening.chapters[0];
       this.ui.chapter.value = this.chapter.id;
-      if (reset) this.reset(); else this.reset();
+      this.reset();
     }
     selectChapter() {
       this.chapter = this.opening.chapters.find(item => item.id === this.ui.chapter.value) || this.opening.chapters[0];
@@ -74,7 +79,7 @@
     }
     isLearn() { return this.ui.workflow.value === 'learn'; }
     learnerSide() { return this.ui.side.value === 'b' ? 'b' : 'w'; }
-    canInteract() { return !this.isLearn() && this.game?.turn === this.learnerSide() && this.game.history.length < this.chapter.moves.length; }
+    canInteract() { return Boolean(this.chapter) && !this.isLearn() && this.game?.turn === this.learnerSide() && this.game.history.length < this.chapter.moves.length; }
 
     reset() {
       if (!this.game || !this.chapter) return;
@@ -139,7 +144,7 @@
     }
 
     stepLearn(delta) {
-      if (!this.game || !this.isLearn()) return;
+      if (!this.game || !this.chapter || !this.isLearn()) return;
       const target = Math.max(0, Math.min(this.chapter.moves.length, this.game.history.length + delta));
       this.token += 1;
       this.game.reset();
